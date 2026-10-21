@@ -3,17 +3,22 @@ use std::{collections::HashMap, sync::Arc};
 use std::time::{Duration, Instant};
 use std::error;
 
+use serde::{Deserialize, Serialize};
+
+use uuid;
+
 use futures::{SinkExt, StreamExt};
 use futures::stream::SplitSink;
-use rustls::ClientConfig;
-use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
-use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, Connector, connect_async_tls_with_config, tungstenite, tungstenite::protocol::Message};
-use uuid;
-use serde::{Deserialize, Serialize};
+
 use tokio::sync::{mpsc, Mutex};
 use tokio::net::TcpStream;
 use tokio;
+
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, Connector, connect_async_tls_with_config, tungstenite, tungstenite::protocol::Message};
+
+use rustls::ClientConfig;
+use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
 
 use crate::network::protocol::{ServerMessage, ClientMessage};
 use crate::components::main_window;
@@ -211,7 +216,7 @@ impl Client {
 
         self.request_flush(&window_tx);
 
-        let process_source = async |client_msg| {
+        let process_sink = async |client_msg| {
             if self.send(client_msg).await.is_none() {
                 self.disconnect().await;
                 self.request_flush(&window_tx);
@@ -221,7 +226,7 @@ impl Client {
             Ok::<(), tungstenite::Error>(())
         };
 
-        let process_sink = async |raw_msg| {
+        let process_source = async |raw_msg| {
             match raw_msg {
                 Some(Ok(Message::Binary(data))) => {
                     let res = match data.try_into().map_err(|_| tungstenite::Error::ConnectionClosed)? {
@@ -279,8 +284,8 @@ impl Client {
 
         loop {
             tokio::select! {
-                Some(client_msg) = rx.recv() => process_source(client_msg).await?,
-                raw_msg = source.next() => process_sink(raw_msg).await?,
+                Some(client_msg) = rx.recv() => process_sink(client_msg).await?,
+                raw_msg = source.next() => process_source(raw_msg).await?,
             }
         }
     }
@@ -320,8 +325,7 @@ impl Client {
         }
 
         if let Some(server_id) = *self.id_on_server.lock().await && server_id == id {
-            let mut guard = self.nickname.lock().await;
-            *guard = new_nickname.clone();
+            *self.nickname.lock().await = new_nickname.clone();
         }
 
         Ok(Some(DisplayMessage::NowKnownAs(id, old_nickname, new_nickname.clone())))
