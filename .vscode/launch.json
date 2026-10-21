@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "gdb",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/poker-chat.exe",
+            "preAttachCommands": [
+                "source C:/Users/maya/scoop/apps/rustup/current/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/etc/gdb_load_rust_pretty_printers.py"
+            ],
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "requireExactSource": false,
+            "stopAtEntry": false,
+            "redirectOutput": true,
+            "logging": {
+                "moduleLoad": false,
+                "processExit": false
+            }
+        }
+    ]
+}
+
+

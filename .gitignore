@@ -1,0 +1,6 @@
+/target
+/tools
+/GetWinMDFiles.ps1
+/winmd-folder
+/WinAppSDKDownloader
+Cargo.lock
