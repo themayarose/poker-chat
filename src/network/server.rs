@@ -1,12 +1,14 @@
+use std::fmt::Debug;
 use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use std::net::SocketAddr;
 use std::error;
 
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 
+use tokio_util::sync::CancellationToken;
 use uuid;
 
-use futures::{SinkExt, StreamExt, TryStreamExt};
+use futures::{SinkExt, StreamExt, TryFutureExt, TryStreamExt};
 
 use tokio::{net::TcpListener, sync::Mutex, net::TcpStream, self};
 use tokio::sync::mpsc::{error::SendError, self};
@@ -28,7 +30,14 @@ pub struct Server {
 
     acceptor: TlsAcceptor,
     clients: Mutex<HashMap<uuid::Uuid, Client>>,
+    tasks: Mutex<Vec<CancellationToken>>,
 
+}
+
+impl Debug for Server {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+       write!(f, "id: {:?}", self.id)
+    }
 }
 
 impl PartialEq for Server {
@@ -37,7 +46,7 @@ impl PartialEq for Server {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Client {
     pub id: uuid::Uuid,
     pub address: SocketAddr,
@@ -60,17 +69,13 @@ impl TryInto<client::User> for &Client {
     }
 }
 
-fn err<S1, S2>(tx: &main_window::Sender, title: S1, message: S2) where S1: Into<String>, S2: Into<String> {
-    let title: String = title.into();
-    let message: String = message.into();
-    let window_msg = main_window::Message::err(title, message);
+fn err<S>(tx: &main_window::Sender, message: S) where S: Into<String> {
+    let window_msg = main_window::Message::err("SERVER", message);
     let _ = tx.send(window_msg);
 }
 
-fn log<S1, S2>(tx: &main_window::Sender, title: S1, message: S2) where S1: Into<String>, S2: Into<String> {
-    let title: String = title.into();
-    let message: String = message.into();
-    let window_msg = main_window::Message::log(title, message);
+fn log<S>(tx: &main_window::Sender, message: S) where S: Into<String> {
+    let window_msg = main_window::Message::log("SERVER", message);
     let _ = tx.send(window_msg);
 }
 
@@ -96,23 +101,54 @@ impl Server {
             clients: Mutex::new(HashMap::new()),
             acceptor: make_acceptor()?,
             listener: listener,
+            tasks: vec![].into(),
         }))
+    }
+
+    pub async fn shutdown(self: Arc<Self>) -> main_window::Message {
+        for token in (*self.tasks.lock().await).iter() {
+            token.cancel();
+        }
+
+        *self.tasks.lock().await = vec![];
+
+        main_window::Message::NoOp
     }
 
     pub async fn listen(self: Arc<Self>, window_tx: main_window::Sender) -> main_window::Message {
         loop {
             match self.listener.accept().await {
                 Ok((stream, address)) => {
-                    tokio_handle().spawn(
-                        self.clone().on_client_connected(
-                            stream,
-                            address,
-                            window_tx.clone(),
-                        )
-                    );
+                    let tx = window_tx.clone();
+                    let token = CancellationToken::new();
+
+                    let this1 = self.clone();
+                    let this2 = self.clone();
+
+                    let token1 = token.clone();
+                    let token2 = token.clone();
+
+                    let _ = tokio_handle()
+                        .spawn(async move {
+                            tokio::select! {
+                                _ = this1.on_client_connected(
+                                    stream,
+                                    address,
+                                    tx
+                                ) => { Ok(()) },
+                                _ = token1.cancelled() => { Err(()) },
+                            }
+                        })
+                        .and_then(|_| async move {
+                            (*this2.tasks.lock().await).retain(|t| *t != token2);
+
+                            Ok(())
+                        });
+
+                    (*self.tasks.lock().await).push(token);
                 },
                 Err(e) => {
-                    err(&window_tx, "Connection error", format!("{e:?}"));
+                    err(&window_tx, format!("Connection error: {e:?}"));
                 },
             }
         }
@@ -122,14 +158,14 @@ impl Server {
         let tls = match self.acceptor.accept(stream).await {
             Ok(tls) => tls,
             Err(e) => {
-                err(&window_tx, "TLS handshake failed", format!("{e:?}"));
+                err(&window_tx, format!("TLS handshake failed: {e:?}"));
                 return;
             },
         };
         let ws = match accept_async(tls).await {
             Ok(ws) => ws,
             Err(e) => {
-                err(&window_tx, "WS handshake failed", format!("{e:?}"));
+                err(&window_tx, format!("WS handshake failed: {e:?}"));
                 return;
             },
         };
@@ -184,9 +220,9 @@ impl Server {
                         result.ok_or(tungstenite::Error::AlreadyClosed)?;
                     },
                     Err(err) => {
-                        log(&window_tx, "Deserialization error", format!("{addr} sent a non msgpack message {err}"));
+                        log(&window_tx, format!("Deserialization error: {addr} sent a non msgpack message {err}"));
 
-                        return Err(tungstenite::Error::AlreadyClosed);
+                        Err(tungstenite::Error::AlreadyClosed)?;
                     }
                 }
             }
@@ -207,7 +243,7 @@ impl Server {
 
         let _ = window_tx.send(main_window::Message::ServerClientDisconnected(addr));
 
-        log(&window_tx, "Disconnected", format!("{id} ({addr}) disconnected"));
+        log(&window_tx, format!("Disconnected: {id} ({addr}) disconnected"));
 
         self.clients.lock().await.remove(&id);
     }

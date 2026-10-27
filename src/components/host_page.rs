@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::error::Error;
 
 use windows_reactor::*;
@@ -19,7 +18,7 @@ pub struct HostPage {
 pub struct Input {
     pub window_tx: main_window::Sender,
     pub server_url: String,
-    pub server: Option<Arc<server::Server>>,
+    pub server_is_running: bool,
 }
 
 #[derive(Clone)]
@@ -39,7 +38,7 @@ impl From<Box<dyn Error>> for Message {
 
 impl PartialEq for Input {
     fn eq(&self, other: &Self) -> bool {
-        (self.server == other.server) &&
+        (self.server_is_running == other.server_is_running) &&
         (self.server_url == other.server_url)
     }
 }
@@ -104,8 +103,6 @@ impl Component for HostPage {
     }
 
     fn view(&self, input: &Self::Input, context: &mut ViewContext<Self>) -> View {
-        let is_url_editable = input.server.is_none();
-
         Grid::new()
             .margin(16.0)
             .rows([GridLength::Auto, GridLength::Auto, GridLength::Auto, GridLength::Auto, GridLength::STAR])
@@ -120,7 +117,7 @@ impl Component for HostPage {
                     .into(),
                 TextBox::new()
                     .grid_row(2)
-                    .is_enabled(is_url_editable)
+                    .is_enabled(!input.server_is_running)
                     .vertical_alignment(VerticalAlignment::Top)
                     .text(self.url.clone())
                     .on_text_changed(context.callback(Message::ServerUrlChanged))
@@ -132,13 +129,13 @@ impl Component for HostPage {
                     .spacing(8.0)
                     .children([
                         Button::new()
-                            .is_enabled(is_url_editable)
+                            .is_enabled(!input.server_is_running)
                             .on_click(context.message(Message::StartServer))
                             .content("Start server".to_string())
                             .into(),
                         Button::new()
                             .grid_row(3)
-                            .is_enabled(!is_url_editable)
+                            .is_enabled(input.server_is_running)
                             .on_click(context.message(Message::StopServer))
                             .content("Stop server".to_string())
                             .into(),

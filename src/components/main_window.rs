@@ -6,10 +6,11 @@ use std::error;
 use std::fmt;
 use std::sync::LazyLock;
 
+use windows_reactor::*;
+
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite;
-
-use windows_reactor::*;
+use tokio_util::sync::CancellationToken;
 
 use tokio::sync::mpsc;
 
@@ -30,18 +31,18 @@ pub struct MainWindow {
     pub is_pane_open: bool,
     pub selected_page: Page,
     pub header_message: String,
-    pub clients: Vec<(Arc<client::Client>, Option<ComponentTask>)>,
+    pub clients: Vec<(Arc<client::Client>, Option<CancellationToken>)>,
     pub clients_data: Vec<client::ClientData>,
     pub selected_client: Option<usize>,
     pub server_url: String,
     pub server: Option<Arc<server::Server>>,
-    pub server_task: Option<ComponentTask>,
+    pub server_token: Option<CancellationToken>,
     pub error_queue: VecDeque<Error>,
     pub display_error: Option<Error>,
     pub styles: HashMap<String, styles::ResourceValue>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {
     PaneOpenChanged,
     SelectedTagChanged(Option<String>),
@@ -56,8 +57,8 @@ pub enum Message {
     ClientConnectionRequested(uuid::Uuid, String, String),
     ClientDisconnected(uuid::Uuid),
     ClientRemoved(String),
-    FlushClient(uuid::Uuid),
-    ClientFlushed(client::ClientData),
+    ClientShouldFlush(uuid::Uuid),
+    ClientHasFlushed(client::ClientData),
 
     ExternalMessage(Arc<Mutex<mpsc::UnboundedReceiver<Message>>>, Box<Message>),
     ExternalMessageFailed(Arc<Mutex<mpsc::UnboundedReceiver<Message>>>),
@@ -302,7 +303,7 @@ impl Component for MainWindow {
             selected_client: None,
             server: None,
             server_url: "127.0.0.1:8080".into(),
-            server_task: None,
+            server_token: None,
             error_queue: VecDeque::new(),
             display_error: None,
             styles: Self::get_resources(),
@@ -321,25 +322,25 @@ impl Component for MainWindow {
             Message::SelectedTagChanged(None) => {},
 
 
-            Message::ServerConnected(ws) => {
-                self.server = Some(ws);
 
-                let server = self.server.clone().unwrap();
+            Message::ServerConnected(ws) => {
+                self.server = Some(ws.clone());
                 let tx = self.tx.clone();
 
-                self.server_task = Some(context.spawn_future(server.listen(tx)));
+                self.server_token = Some(context.spawn_future(ws.listen(tx)));
             },
             Message::ServerClientDisconnected(_addr) => {},
             Message::ServerUrlChanged(url) => {
                 self.server_url = url;
             },
             Message::ServerDisconnected => {
-                if let Some(task) = &self.server_task {
-                    task.cancel();
-                    self.server_task = None;
+                if let Some(token) = self.server_token.take() {
+                    token.cancel();
                 }
 
-                self.server = None;
+                if let Some(server) = self.server.take() {
+                    context.spawn_future(server.shutdown());
+                }
             },
 
 
@@ -347,7 +348,7 @@ impl Component for MainWindow {
             Message::ClientCreated(client) => {
                 self.clients.push((client.clone(), None));
 
-                context.sender().send(Message::FlushClient(client.id));
+                context.sender().send(Message::ClientShouldFlush(client.id));
             },
             Message::ClientSelected(index) => {
                 self.selected_client = index;
@@ -357,18 +358,26 @@ impl Component for MainWindow {
                     .find_map(|elem| if elem.0.id == id { Some(elem) } else { None })
                     .and_then(|client_info| {
                         if let (client, None) = client_info {
-                            let tx = self.tx.clone();
+                            let tx1 = self.tx.clone();
+                            let tx2 = self.tx.clone();
                             let copy = client.clone();
 
-                            let task = context.spawn_future_error(
+                            let token = context.spawn_future_error(
                                 async move {
-                                    copy.run(tx, &url, &nickname).await
+                                    let result = copy.run(tx1, &url, &nickname).await;
+
+                                    if result.is_err() {
+                                        copy.disconnect().await;
+                                        let _ = tx2.send(Message::ClientShouldFlush(id));
+                                    }
+
+                                    Ok(result?)
                                 }
                             );
 
-                            *client_info = (client.clone(), Some(task));
+                            *client_info = (client.clone(), Some(token));
 
-                            context.sender().send(Message::FlushClient(id));
+                            context.sender().send(Message::ClientShouldFlush(id));
 
                             Some(())
                         }
@@ -380,8 +389,8 @@ impl Component for MainWindow {
                 self.clients.iter_mut()
                     .find_map(|elem| if elem.0.id == id { Some(elem) } else { None })
                     .and_then(|client_info| {
-                        if let (client, Some(task)) = client_info {
-                            task.cancel();
+                        if let (client, Some(token)) = client_info {
+                            token.cancel();
 
                             *client_info = (client.clone(), None);
 
@@ -391,9 +400,9 @@ impl Component for MainWindow {
                     });
             },
             Message::ClientRemoved(str_id) => {
-                self.clients.retain(|(client, task)| {
+                self.clients.retain(|(client, token)| {
                     if client.id.to_string( ) == str_id {
-                        task.as_ref().map(|task| task.cancel());
+                        token.as_ref().map(|token| token.cancel());
 
                         false
                     }
@@ -401,7 +410,7 @@ impl Component for MainWindow {
                 });
                 self.clients_data.retain(|client| client.id.to_string() != str_id);
             },
-            Message::FlushClient(id) => {
+            Message::ClientShouldFlush(id) => {
                 self.clients.iter()
                     .find_map(|(client, _)| if client.id == id { Some(client) } else { None })
                     .and_then(|client| {
@@ -409,14 +418,14 @@ impl Component for MainWindow {
 
                         context.spawn_future(
                             async move {
-                                Message::ClientFlushed(client.get_data().await)
+                                Message::ClientHasFlushed(client.get_data().await)
                             }
                         );
 
                         Some(())
                     });
             },
-            Message::ClientFlushed(updated) => {
+            Message::ClientHasFlushed(updated) => {
                 self.selected_client = self.clients_data.iter_mut()
                     .find_map(|client| if client.id == updated.id { Some(client) } else { None })
                     .and_then(|client| { *client = updated.clone(); self.selected_client })
@@ -461,7 +470,7 @@ impl Component for MainWindow {
             Message::NoOp => {},
         }
 
-        if self.server_task.is_some() {
+        if self.server_token.is_some() {
             self.header_message = "Connected".into();
         }
         else {
@@ -483,7 +492,7 @@ impl Component for MainWindow {
             Page::Host => {
                 View::component::<HostPage>(host_page::Input {
                     window_tx: self.tx.clone(),
-                    server: self.server.clone(),
+                    server_is_running: self.server.is_some(),
                     server_url: self.server_url.clone(),
                 })
             },

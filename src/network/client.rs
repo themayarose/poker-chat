@@ -23,6 +23,7 @@ use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signat
 use crate::network::protocol::{ServerMessage, ClientMessage};
 use crate::components::main_window;
 
+#[derive(Debug)]
 pub struct Client {
     pub id: uuid::Uuid,
     pub id_on_server: Mutex<Option<uuid::Uuid>>,
@@ -70,7 +71,7 @@ impl Debug for ClientData {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]
 pub struct User {
     pub id: uuid::Uuid,
     pub nickname: String,
@@ -156,6 +157,12 @@ fn make_config() -> Result<ClientConfig, Box<dyn error::Error>> {
     )
 }
 
+impl Drop for Client {
+    fn drop(&mut self) {
+       println!("Client dropped");
+    }
+}
+
 impl Client {
     pub fn new() -> Result<Arc<Self>, Box<dyn error::Error>> {
         Ok(Arc::new(Client {
@@ -187,7 +194,7 @@ impl Client {
         }
     }
 
-    pub async fn run(&self, window_tx: main_window::Sender, url: &String, nickname: &String) -> Result<main_window::Message, Box<dyn error::Error>> {
+    pub async fn run(&self, window_tx: main_window::Sender, url: &String, nickname: &String) -> Result<main_window::Message, tungstenite::Error> {
         let (tx, mut rx) = mpsc::unbounded_channel::<ClientMessage>();
 
         let url = if !url.starts_with("wss://") { "wss://".to_string() + url } else { url.to_owned() };
@@ -291,7 +298,7 @@ impl Client {
     }
 
     pub fn request_flush(&self, window_tx: &main_window::Sender) {
-        let _ = window_tx.send(main_window::Message::FlushClient(self.id));
+        let _ = window_tx.send(main_window::Message::ClientShouldFlush(self.id));
     }
 
     pub async fn on_welcome(&self, new_id: &uuid::Uuid) {
