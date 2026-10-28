@@ -14,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 
 use tokio::sync::mpsc;
 
-use crate::extensions::component_context_ext::HasCancelMessage;
 use crate::extensions::*;
 
 use crate::components::play_page::{self, PlayPage};
@@ -27,19 +26,19 @@ use crate::helpers::styles;
 pub type Sender = mpsc::UnboundedSender<Message>;
 
 pub struct MainWindow {
-    pub tx: Sender,
-    pub is_pane_open: bool,
-    pub selected_page: Page,
-    pub header_message: String,
-    pub clients: Vec<(Arc<client::Client>, Option<CancellationToken>)>,
-    pub clients_data: Vec<client::ClientData>,
-    pub selected_client: Option<usize>,
-    pub server_url: String,
-    pub server: Option<Arc<server::Server>>,
-    pub server_token: Option<CancellationToken>,
-    pub error_queue: VecDeque<Error>,
-    pub display_error: Option<Error>,
-    pub styles: HashMap<String, styles::ResourceValue>,
+    tx: Sender,
+    is_pane_open: bool,
+    selected_page: Page,
+    header_message: String,
+    clients: Vec<(Arc<client::Client>, Option<CancellationToken>)>,
+    clients_data: Vec<client::ClientData>,
+    selected_client: Option<usize>,
+    server_url: String,
+    server: Option<Arc<server::Server>>,
+    server_token: Option<CancellationToken>,
+    error_queue: VecDeque<Error>,
+    display_error: Option<Error>,
+    styles: HashMap<String, styles::ResourceValue>,
 }
 
 #[derive(Debug, Clone)]

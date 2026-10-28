@@ -8,12 +8,12 @@ use crate::helpers::typography::*;
 use crate::helpers::styles;
 
 pub struct ClientPage {
-    pub id: uuid::Uuid,
-    pub nickname: String,
-    pub server_url: String,
-    pub show_banner: bool,
-    pub connection_tx: Option<mpsc::UnboundedSender<protocol::ClientMessage>>,
-    pub window_tx: mpsc::UnboundedSender<main_window::Message>,
+    id: uuid::Uuid,
+    nickname: String,
+    server_url: String,
+    connection_tx: Option<mpsc::UnboundedSender<protocol::ClientMessage>>,
+    window_tx: mpsc::UnboundedSender<main_window::Message>,
+    message: String,
 }
 
 #[derive(Clone)]
@@ -21,6 +21,7 @@ pub enum Message {
     PreConnectionNicknameChanged(String),
     PreConnectionUrlChanged(String),
     RequestConnection(main_window::Sender),
+    TextChanged(String),
     SendText,
     Quit,
     Err(main_window::Error),
@@ -52,29 +53,30 @@ impl PartialEq for Input {
 }
 
 
-// impl Into<View> for DisplayMessage {
-//     fn into(self) -> View {
-//        match &self {
-//            DisplayMessage::Text(_, nickname, content) => {
-//            },
-//            _ => {
-//                List
-//            }
-//        }
-//     }
-// }
+impl Into<View> for client::DisplayMessage {
+    fn into(self) -> View {
+       match &self {
+           client::DisplayMessage::Text(_, nickname, content) => {
+               ListViewItem::new()
+                   .content(format!("<{nickname}> {content}"))
+           },
+           _ => {
+               ListViewItem::new()
+                   .content(format!("{:?}", self))
+           }
+       }
+    }
+}
+
+
 
 impl ClientPage {
     pub fn get_content(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
         let url = &self.server_url.clone();
 
-        let text = input.data.display.iter()
-            .map(|m| format!("{m:?}"))
-            .fold("".to_string(), |acc, m| acc + "\n" + m.as_str())
-        ;
-
-
         let connect = StackPanel::new()
+            .grid_row(0)
+            .grid_column(0)
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .vertical_alignment(VerticalAlignment::Stretch)
             .orientation(Orientation::Vertical)
@@ -105,22 +107,66 @@ impl ClientPage {
                     .content("Connect")
                     .into(),
                 Button::new()
-                    .on_click(context.message(Message::SendText))
-                    .is_enabled(input.data.connected)
-                    .content("Send text")
-                    .into(),
-                Button::new()
                     .on_click(context.message(Message::Quit))
                     .is_enabled(input.data.connected)
                     .content("Disconnect")
                     .into(),
-                TextBlock::new()
-                    .text(text)
-                    .text_wrapping(TextWrapping::WrapWholeWords)
-                    .into(),
             ] as [View; _]);
 
         connect
+    }
+
+    fn layout(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
+        Grid::new()
+            .columns([GridLength::Star(2.0), GridLength::Star(1.0)])
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .vertical_alignment(VerticalAlignment::Stretch)
+            .children([
+                self.game(input, context),
+                self.chat(input, context),
+            ] as [View; _])
+    }
+
+    fn game(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
+        self.get_content(input, context)
+        // Grid::new()
+        //     .grid_column(0)
+        //     .children([
+        //     ] as [View; _])
+    }
+
+    fn chat(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
+        let messages: Vec<KeyedView> = input.data.display.iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, m)| KeyedView::new(i, m))
+            .collect();
+
+        Grid::new()
+            .grid_column(1)
+            .rows([GridLength::STAR, GridLength::Auto])
+            .columns([GridLength::STAR, GridLength::Auto])
+            .row_spacing(4.0)
+            .column_spacing(2.0)
+            .children([
+                ListView::new()
+                    .grid_row(0)
+                    .grid_column_span(2)
+                    .selection_mode(ListViewSelectionMode::None)
+                    .collection_slot(ListViewSlot::Items, messages),
+                TextBox::new()
+                    .grid_row(1)
+                    .grid_column(0)
+                    .text(self.message.clone())
+                    .on_text_changed(context.callback(Message::TextChanged))
+                    .accepts_return(true)
+                    .into(),
+                Button::new()
+                    .grid_row(1)
+                    .grid_column(1)
+                    .on_click(context.message(Message::SendText))
+                    .content("Send"),
+            ] as [View; _])
     }
 }
 
@@ -133,9 +179,9 @@ impl Component for ClientPage {
             id: input.data.id,
             nickname: input.data.nickname.clone(),
             server_url: input.data.url.clone().unwrap_or("".into()),
-            show_banner: false,
             connection_tx: input.data.tx.clone(),
             window_tx: input.window_tx.clone(),
+            message: "".into(),
         }
     }
 
@@ -144,7 +190,7 @@ impl Component for ClientPage {
        self.window_tx = input.window_tx.clone();
     }
 
-    fn update(&mut self, message: Self::Message, _context: &ComponentContext<Self>) {
+    fn update(&mut self, message: Self::Message, context: &ComponentContext<Self>) {
         match message {
             Message::PreConnectionUrlChanged(url) => {
                 self.server_url = url;
@@ -160,10 +206,16 @@ impl Component for ClientPage {
 
                 let _ = tx.send(main_window::Message::ClientConnectionRequested(id, url, nickname));
             },
+            Message::TextChanged(msg) => {
+                if msg.ends_with("\r") { context.sender().send(Message::SendText); }
+                else { self.message = msg; }
+            },
             Message::SendText => {
                 if let Some(tx) = self.connection_tx.clone() {
-                    let _ = tx.send(protocol::ClientMessage::SendMessage("hello world!".into()));
+                    let _ = tx.send(protocol::ClientMessage::SendMessage(self.message.clone()));
                 }
+
+                self.message = "".into();
             },
             Message::Quit => {
                 if let Some(tx) = self.connection_tx.clone() {
@@ -203,7 +255,7 @@ impl Component for ClientPage {
             .content(
                 border
                     .padding(16.0)
-                    .content(self.get_content(input, context))
+                    .content(self.layout(input, context))
             )
     }
 }
