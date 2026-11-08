@@ -81,14 +81,12 @@ impl Into<View> for MessageContext<'_> {
             _ => None,
         };
 
-        let now = chrono::Local::now();
-
         ListViewItem::new()
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .margin(Thickness::new(0.0, 0.0, 0.0, 12.0))
             .content(
                 match message {
-                    client::DisplayMessage::Text(id, nickname, content) => {
+                    client::DisplayMessage::Text(now, id, nickname, content) => {
                         let is_self = Some(id) == id_on_server;
                         let highlight_bg = if is_self { highlight_bg } else { card_bg };
                         let highlight_fg = if is_self { highlight_fg } else { None };
@@ -125,19 +123,19 @@ impl Into<View> for MessageContext<'_> {
                                     ])
                             )
                     },
-                    client::DisplayMessage::Joined(_, nickname) => {
+                    client::DisplayMessage::Joined(now, _, nickname) => {
                         control_message(now, info_bg, format!("{nickname} has joined the chat."))
                     },
-                    client::DisplayMessage::Left(_, nickname) => {
+                    client::DisplayMessage::Left(now, _, nickname) => {
                         control_message(now, info_bg, format!("{nickname} has left the chat."))
                     },
-                    client::DisplayMessage::NowKnownAs(_, old_nickname, new_nickname) => {
+                    client::DisplayMessage::NowKnownAs(now, _, old_nickname, new_nickname) => {
                         control_message(now, info_bg, format!("{old_nickname} is now known as {new_nickname}."))
                     },
-                    client::DisplayMessage::NicknameTaken(nickname) => {
+                    client::DisplayMessage::NicknameTaken(now, nickname) => {
                         control_message(now, info_bg, format!("The nickname {nickname:?} is already taken."))
                     },
-                    client::DisplayMessage::Pong(delta) => {
+                    client::DisplayMessage::Pong(now, delta) => {
                         let delta: f64 = match delta.num_microseconds() {
                             Some(delta) => (delta as f64) / 1000.0,
                             None => f64::MAX / 1000.0,

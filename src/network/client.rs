@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use std::time::Instant;
 use std::error;
 
-use chrono::{Local, TimeDelta};
+use chrono::{Local, TimeDelta, DateTime};
 use serde::{Deserialize, Serialize};
 
 use uuid;
@@ -80,12 +80,12 @@ pub struct User {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum DisplayMessage {
-    Text(uuid::Uuid, String, String),
-    NowKnownAs(uuid::Uuid, String, String),
-    NicknameTaken(String),
-    Joined(uuid::Uuid, String),
-    Left(uuid::Uuid, String),
-    Pong(TimeDelta),
+    Text(DateTime<Local>, uuid::Uuid, String, String),
+    NowKnownAs(DateTime<Local>, uuid::Uuid, String, String),
+    NicknameTaken(DateTime<Local>, String),
+    Joined(DateTime<Local>, uuid::Uuid, String),
+    Left(DateTime<Local>, uuid::Uuid, String),
+    Pong(DateTime<Local>, TimeDelta),
 }
 
 #[derive(Debug)]
@@ -247,7 +247,7 @@ impl Client {
                             self.on_nickname_change(id, &new_nickname).await
                         },
                         ServerMessage::NicknameAlreadyTaken(nickname) => {
-                            Ok(Some(DisplayMessage::NicknameTaken(nickname.clone())))
+                            Ok(Some(DisplayMessage::NicknameTaken(Local::now(), nickname.clone())))
                         },
                         ServerMessage::TextMessage(id, text) => {
                             self.on_text_message(id, &text).await
@@ -262,7 +262,7 @@ impl Client {
                             Ok(self.on_current_users(users).await)
                         },
                         ServerMessage::Pong(time) => {
-                            Ok(Some(DisplayMessage::Pong(Local::now() - time)))
+                            Ok(Some(DisplayMessage::Pong(Local::now(), Local::now() - time)))
                         },
                         ServerMessage::NoNicknameError => Err(
                             main_window::Error::err(
@@ -338,12 +338,12 @@ impl Client {
             *self.nickname.lock().await = new_nickname.clone();
         }
 
-        Ok(Some(DisplayMessage::NowKnownAs(id, old_nickname, new_nickname.clone())))
+        Ok(Some(DisplayMessage::NowKnownAs(Local::now(), id, old_nickname, new_nickname.clone())))
     }
 
     pub async fn on_text_message(&self, id: uuid::Uuid, text: &String) -> Result<Option<DisplayMessage>, main_window::Error> {
         self.users.lock().await.get(&id)
-            .map(|user| Some(DisplayMessage::Text(id.to_owned(), user.nickname.clone(), text.clone())))
+            .map(|user| Some(DisplayMessage::Text(Local::now(), id.to_owned(), user.nickname.clone(), text.clone())))
             .ok_or(
                 main_window::Error::log(
                     "Unsynced userlist",
@@ -357,12 +357,12 @@ impl Client {
         let id = user.id;
         self.users.lock().await.insert(user.id, user);
 
-        Some(DisplayMessage::Joined(id, nickname))
+        Some(DisplayMessage::Joined(Local::now(), id, nickname))
     }
 
     pub async fn on_user_left(&self, id: uuid::Uuid) -> Result<Option<DisplayMessage>, main_window::Error> {
         self.users.lock().await.remove(&id)
-            .map(|user| Some(DisplayMessage::Left(id, user.nickname)))
+            .map(|user| Some(DisplayMessage::Left(Local::now(), id, user.nickname)))
             .ok_or(
                 main_window::Error::log(
                     "Unsynced userlist",
