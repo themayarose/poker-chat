@@ -21,3 +21,4 @@ windows-future = "0.100.0"
 windows-reactor = "0.100.0"
 windows-time = "0.100.0"
 tokio-util = "0.7.20"
+chrono = { version = "0.4.45", features = ["serde"] }

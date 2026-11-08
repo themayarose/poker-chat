@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 use std::{collections::HashMap, sync::Arc};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::error;
 
+use chrono::{Local, TimeDelta};
 use serde::{Deserialize, Serialize};
 
 use uuid;
@@ -84,7 +85,7 @@ pub enum DisplayMessage {
     NicknameTaken(String),
     Joined(uuid::Uuid, String),
     Left(uuid::Uuid, String),
-    Pong(uuid::Uuid, Duration),
+    Pong(TimeDelta),
 }
 
 #[derive(Debug)]
@@ -260,7 +261,9 @@ impl Client {
                         ServerMessage::CurrentUsers(users) => {
                             Ok(self.on_current_users(users).await)
                         },
-                        ServerMessage::Pong => Ok(None),
+                        ServerMessage::Pong(time) => {
+                            Ok(Some(DisplayMessage::Pong(Local::now() - time)))
+                        },
                         ServerMessage::NoNicknameError => Err(
                             main_window::Error::err(
                                 "Server error",

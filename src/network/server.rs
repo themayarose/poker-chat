@@ -205,7 +205,7 @@ impl Server {
 
                                 Some(())
                             },
-                            protocol::ClientMessage::Ping => {
+                            protocol::ClientMessage::Ping(_) => {
                                 let server_msg = client_msg.forward(&id)
                                     .expect("Ping should always forward");
 

@@ -2,6 +2,8 @@ use rmp_serde;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::Bytes;
 
+use chrono::{DateTime, Local};
+
 use crate::network::client;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -9,7 +11,7 @@ pub enum ClientMessage {
     Join(String),
     SetNickname(String),
     SendMessage(String),
-    Ping,
+    Ping(DateTime<Local>),
     Quit,
 }
 
@@ -33,7 +35,7 @@ impl ClientMessage {
             ClientMessage::SetNickname(nickname) => Some(ServerMessage::NicknameChanged(from.to_owned(), nickname.clone())),
             ClientMessage::SendMessage(message) => Some(ServerMessage::TextMessage(from.to_owned(), message.clone())),
             ClientMessage::Quit => Some(ServerMessage::UserLeft(from.to_owned())),
-            ClientMessage::Ping => Some(ServerMessage::Pong),
+            ClientMessage::Ping(time) => Some(ServerMessage::Pong(time.to_owned())),
             _ => None,
         }
     }
@@ -49,7 +51,7 @@ pub enum ServerMessage {
     UserJoined(client::User),
     CurrentUsers(Vec<client::User>),
     NicknameAlreadyTaken(String),
-    Pong,
+    Pong(chrono::DateTime<Local>),
     NoNicknameError,
 }
 

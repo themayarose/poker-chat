@@ -1,3 +1,5 @@
+use chrono::{self, DateTime, Local};
+
 use windows_reactor::*;
 
 use tokio::sync::mpsc;
@@ -20,7 +22,7 @@ pub struct ClientPage {
 pub enum Message {
     PreConnectionNicknameChanged(String),
     PreConnectionUrlChanged(String),
-    RequestConnection(main_window::Sender),
+    RequestConnection,
     TextChanged(String),
     SendText,
     Quit,
@@ -52,23 +54,115 @@ impl PartialEq for Input {
     }
 }
 
+struct MessageContext<'a>(client::DisplayMessage, &'a mut ViewContext<ClientPage>, Option<uuid::Uuid>);
 
-impl Into<View> for client::DisplayMessage {
+impl Into<View> for MessageContext<'_> {
     fn into(self) -> View {
-       match &self {
-           client::DisplayMessage::Text(_, nickname, content) => {
-               ListViewItem::new()
-                   .content(format!("<{nickname}> {content}"))
-           },
-           _ => {
-               ListViewItem::new()
-                   .content(format!("{:?}", self))
-           }
-       }
+        let MessageContext(message, context, id_on_server) = self;
+        let styles = context.use_context(&main_window::STYLES);
+
+        let card_bg: Option<Brush> = match styles.get("CardBackgroundFillColorSecondaryBrush") {
+            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
+            _ => None,
+        };
+
+        let highlight_bg: Option<Brush> = match styles.get("AccentFillColorTertiaryBrush") {
+            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
+            _ => None,
+        };
+
+        let highlight_fg: Option<Brush> = match styles.get("TextOnAccentFillColorPrimaryBrush") {
+            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
+            _ => None,
+        };
+
+        let info_bg: Option<Brush> = match styles.get("SolidBackgroundFillColorBaseAltBrush") {
+            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
+            _ => None,
+        };
+
+        let now = chrono::Local::now();
+
+        ListViewItem::new()
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .margin(Thickness::new(0.0, 0.0, 0.0, 12.0))
+            .content(
+                match message {
+                    client::DisplayMessage::Text(id, nickname, content) => {
+                        let is_self = Some(id) == id_on_server;
+                        let highlight_bg = if is_self { highlight_bg } else { card_bg };
+                        let highlight_fg = if is_self { highlight_fg } else { None };
+                        let alignment = if is_self { HorizontalAlignment::Right } else { HorizontalAlignment::Left };
+
+                        Border::new()
+                            .corner_radius(4.0)
+                            .horizontal_alignment(alignment)
+                            .background_optional(highlight_bg)
+                            .padding(12.0)
+                            .content(
+                                Grid::new()
+                                    .row_spacing(4.0)
+                                    .column_spacing(8.0)
+                                    .rows([GridLength::Auto, GridLength::Auto])
+                                    .columns([GridLength::STAR, GridLength::Auto])
+                                    .children([
+                                        body_strong(nickname)
+                                            .vertical_alignment(VerticalAlignment::Bottom)
+                                            .grid_row(0)
+                                            .grid_column(0)
+                                            .foreground_optional(highlight_fg),
+                                        caption(format!("{}", now.format("%H:%M:%S")))
+                                            .vertical_alignment(VerticalAlignment::Bottom)
+                                            .grid_row(0)
+                                            .grid_column(1)
+                                            .foreground_optional(highlight_fg),
+                                        body(content)
+                                            .text_wrapping(TextWrapping::WrapWholeWords)
+                                            .grid_row(1)
+                                            .grid_column(0)
+                                            .grid_column_span(2)
+                                            .foreground_optional(highlight_fg),
+                                    ])
+                            )
+                    },
+                    client::DisplayMessage::Joined(_, nickname) => {
+                        control_message(now, info_bg, format!("{nickname} has joined the chat."))
+                    },
+                    client::DisplayMessage::Left(_, nickname) => {
+                        control_message(now, info_bg, format!("{nickname} has left the chat."))
+                    },
+                    client::DisplayMessage::NowKnownAs(_, old_nickname, new_nickname) => {
+                        control_message(now, info_bg, format!("{old_nickname} is now known as {new_nickname}."))
+                    },
+                    client::DisplayMessage::NicknameTaken(nickname) => {
+                        control_message(now, info_bg, format!("The nickname {nickname:?} is already taken."))
+                    },
+                    client::DisplayMessage::Pong(delta) => {
+                        let delta: f64 = match delta.num_microseconds() {
+                            Some(delta) => (delta as f64) / 1000.0,
+                            None => f64::MAX / 1000.0,
+                        };
+
+                        control_message(now, info_bg, format!("Lag: {delta}ms"))
+                    },
+                }
+            )
     }
 }
 
-
+fn control_message(now: DateTime<Local>, color: Option<Brush>, text: impl Into<String>) -> View {
+    Border::new()
+        .corner_radius(4.0)
+        .horizontal_alignment(HorizontalAlignment::Center)
+        .background_optional(color)
+        .padding(8.0)
+        .content(StackPanel::new().orientation(Orientation::Vertical).spacing(2.0)
+            .children([
+                caption(format!("{}", now.format("%H:%M:%S"))).horizontal_alignment(HorizontalAlignment::Center),
+                body(text).horizontal_alignment(HorizontalAlignment::Center),
+            ])
+        )
+}
 
 impl ClientPage {
     pub fn get_content(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
@@ -102,7 +196,7 @@ impl ClientPage {
                     .on_text_changed(context.callback(Message::PreConnectionUrlChanged))
                     .into(),
                 Button::new()
-                    .on_click(context.message(Message::RequestConnection(input.window_tx.clone())))
+                    .on_click(context.message(Message::RequestConnection))
                     .is_enabled(!input.data.connected)
                     .content("Connect")
                     .into(),
@@ -119,6 +213,7 @@ impl ClientPage {
     fn layout(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
         Grid::new()
             .columns([GridLength::Star(2.0), GridLength::Star(1.0)])
+            .column_spacing(16.0)
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .vertical_alignment(VerticalAlignment::Stretch)
             .children([
@@ -139,31 +234,63 @@ impl ClientPage {
         let messages: Vec<KeyedView> = input.data.display.iter()
             .cloned()
             .enumerate()
-            .map(|(i, m)| KeyedView::new(i, m))
+            .map(|(i, m)| KeyedView::new(i, MessageContext(m, context, input.data.id_on_server)))
             .collect();
+
+        let styles = context.use_context(&main_window::STYLES);
+
+        let chat_bg: Option<Brush> = match styles.get("LayerOnMicaBaseAltFillColorDefaultBrush") {
+            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
+            _ => None,
+        };
+
+        let chat_border: Option<Brush> = match styles.get("CardStrokeColorDefaultBrush") {
+            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
+            _ => None,
+        };
+
 
         Grid::new()
             .grid_column(1)
             .rows([GridLength::STAR, GridLength::Auto])
             .columns([GridLength::STAR, GridLength::Auto])
-            .row_spacing(4.0)
-            .column_spacing(2.0)
+            .row_spacing(8.0)
+            .column_spacing(8.0)
             .children([
-                ListView::new()
+                Border::new()
                     .grid_row(0)
                     .grid_column_span(2)
-                    .selection_mode(ListViewSelectionMode::None)
-                    .collection_slot(ListViewSlot::Items, messages),
-                TextBox::new()
+                    .background_optional(chat_bg)
+                    .border_brush_optional(chat_border)
+                    .border_thickness(1.0)
+                    .corner_radius(4.0)
+                    .padding(Thickness::new(0.0, 8.0, 0.0, 8.0))
+                    .content(
+                        ListView::new()
+                            .selection_mode(ListViewSelectionMode::None)
+                            .collection_slot(ListViewSlot::Items, messages)
+                    ),
+                Grid::new()
                     .grid_row(1)
                     .grid_column(0)
-                    .text(self.message.clone())
-                    .on_text_changed(context.callback(Message::TextChanged))
-                    .accepts_return(true)
-                    .into(),
+                    .key_accelerators(KeyAccelerators::new([
+                            KeyAccelerator::new(
+                                AcceleratorKey::Enter,
+                                AcceleratorModifiers::None,
+                                context.message(Message::SendText)
+                            ),
+                    ]))
+                    .children([
+                        TextBox::new()
+                            .text(self.message.clone())
+                            .is_enabled(input.data.connected)
+                            .on_text_changed(context.callback(Message::TextChanged))
+                            .into()
+                    ] as [View; _]),
                 Button::new()
                     .grid_row(1)
                     .grid_column(1)
+                    .is_enabled(input.data.connected)
                     .on_click(context.message(Message::SendText))
                     .content("Send"),
             ] as [View; _])
@@ -190,7 +317,7 @@ impl Component for ClientPage {
        self.window_tx = input.window_tx.clone();
     }
 
-    fn update(&mut self, message: Self::Message, context: &ComponentContext<Self>) {
+    fn update(&mut self, message: Self::Message, _context: &ComponentContext<Self>) {
         match message {
             Message::PreConnectionUrlChanged(url) => {
                 self.server_url = url;
@@ -198,21 +325,30 @@ impl Component for ClientPage {
             Message::PreConnectionNicknameChanged(nickname) => {
                 self.nickname = nickname;
             },
-            Message::RequestConnection(tx) => {
-                let tx = tx.clone();
+            Message::RequestConnection => {
                 let id = self.id;
                 let nickname = self.nickname.clone();
                 let url = self.server_url.clone();
 
-                let _ = tx.send(main_window::Message::ClientConnectionRequested(id, url, nickname));
+                let _ = self.window_tx.send(main_window::Message::ClientConnectionRequested(id, url, nickname));
             },
             Message::TextChanged(msg) => {
-                if msg.ends_with("\r") { context.sender().send(Message::SendText); }
-                else { self.message = msg; }
+                self.message = msg;
             },
             Message::SendText => {
                 if let Some(tx) = self.connection_tx.clone() {
-                    let _ = tx.send(protocol::ClientMessage::SendMessage(self.message.clone()));
+                    if self.message.starts_with("/nick") {
+                        let (_, new_nick) = self.message.split_at(5);
+                        let new_nick = new_nick.trim();
+
+                        let _ = tx.send(protocol::ClientMessage::SetNickname(new_nick.into()));
+                    }
+                    else if self.message.starts_with("/ping") {
+                        let _ = tx.send(protocol::ClientMessage::Ping(Local::now()));
+                    }
+                    else {
+                        let _ = tx.send(protocol::ClientMessage::SendMessage(self.message.clone()));
+                    }
                 }
 
                 self.message = "".into();
@@ -245,7 +381,7 @@ impl Component for ClientPage {
         let styles = context.use_context(&main_window::STYLES);
 
         if let Some(styles::ResourceValue::Color(tabview_bg)) = styles.get("TabViewItemHeaderBackgroundSelected") {
-            border = border.background(tabview_bg.clone());
+            border = border.background(tabview_bg.to_owned());
         }
 
         TabViewItem::new()
@@ -257,5 +393,6 @@ impl Component for ClientPage {
                     .padding(16.0)
                     .content(self.layout(input, context))
             )
+            .tooltip("")
     }
 }

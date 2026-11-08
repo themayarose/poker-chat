@@ -247,6 +247,12 @@ impl MainWindow {
     fn get_resources() -> HashMap<String, styles::ResourceValue> {
         let styles: [&str; _] = [
             "TabViewItemHeaderBackgroundSelected",
+            "AccentFillColorTertiaryBrush",
+            "TextOnAccentFillColorPrimaryBrush",
+            "CardBackgroundFillColorSecondaryBrush",
+            "SolidBackgroundFillColorBaseAltBrush",
+            "LayerOnMicaBaseAltFillColorDefaultBrush",
+            "CardStrokeColorDefaultBrush",
         ];
 
         styles.iter()
