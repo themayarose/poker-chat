@@ -1,3 +1,4 @@
+pub mod app;
 pub mod main_window;
 pub mod play_page;
 pub mod host_page;

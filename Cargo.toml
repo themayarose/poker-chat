@@ -24,8 +24,10 @@ windows-core = { path = "windows-rs/crates/libs/core" }
 windows-future = { path = "windows-rs/crates/libs/future" }
 windows-reactor = { path = "windows-rs/crates/libs/reactor" }
 windows-time = { path = "windows-rs/crates/libs/time" }
+# windows = { path = "windows-rs/crates/libs/windows", features = ["UI", "UI_ApplicationSettings", "UI_Core", ] }
 tokio-util = "0.7.20"
 chrono = { version = "0.4.45", features = ["serde"] }
 
 [build-dependencies]
 windows-bindgen = { path = "windows-rs/crates/libs/bindgen" }
+windows-reactor-setup = { path = "windows-rs/crates/libs/reactor-setup" }

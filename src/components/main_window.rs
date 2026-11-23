@@ -21,7 +21,6 @@ use crate::components::play_page::{self, PlayPage};
 use crate::components::host_page::{self, HostPage};
 use crate::components::settings_page::{self, SettingsPage};
 use crate::network::{server, client};
-use crate::helpers::theme_resources::theme_resource;
 use crate::helpers::styles;
 
 pub type Sender = mpsc::UnboundedSender<Message>;
@@ -39,7 +38,6 @@ pub struct MainWindow {
     server_token: Option<CancellationToken>,
     error_queue: VecDeque<Error>,
     display_error: Option<Error>,
-    styles: HashMap<String, styles::ResourceValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -237,27 +235,6 @@ impl MainWindow {
             .content(View::from(self.server_url.clone()))
             .into()
     }
-
-    fn get_resources() -> HashMap<String, styles::ResourceValue> {
-        let styles: [&str; _] = [
-            "TabViewItemHeaderBackgroundSelected",
-            "AccentFillColorTertiaryBrush",
-            "TextOnAccentFillColorPrimaryBrush",
-            "CardBackgroundFillColorSecondaryBrush",
-            "SolidBackgroundFillColorBaseAltBrush",
-            "LayerOnMicaBaseAltFillColorDefaultBrush",
-            "CardStrokeColorDefaultBrush",
-        ];
-
-        styles.iter()
-            .filter_map(|key| {
-                theme_resource(key, WindowTheme::System)
-                    .ok()
-                    .flatten()
-                    .and_then(|resource| Some((key.to_string(), resource.into())))
-            })
-            .collect()
-    }
 }
 
 async fn recv_message(rx: Arc<Mutex<mpsc::UnboundedReceiver<Message>>>) -> Message {
@@ -292,11 +269,6 @@ impl Component for MainWindow {
             Err(e) => context.sender().send(e.into()),
         };
 
-        let resources = Self::get_resources();
-        let count = resources.iter().count();
-
-        println!("count: {count}");
-
         MainWindow {
             tx: tx,
             is_pane_open: false,
@@ -310,7 +282,6 @@ impl Component for MainWindow {
             server_token: None,
             error_queue: VecDeque::new(),
             display_error: None,
-            styles: resources,
         }
     }
 
@@ -509,8 +480,6 @@ impl Component for MainWindow {
 
         let navigation_view = self.get_navigation_view(context, frame);
 
-        provide(&STYLES, self.styles.clone(),
-            context.with_titlebar(WindowBackdrop::Mica, titlebar, navigation_view)
-        )
+        context.with_titlebar(WindowBackdrop::Mica, titlebar, navigation_view)
     }
 }

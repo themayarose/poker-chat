@@ -1,6 +1,6 @@
 use windows_reactor as win;
 
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Color {
     pub alpha: u8,
     pub red: u8,
@@ -32,7 +32,7 @@ impl Into<win::Brush> for Color {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Thickness {
     pub left: f64,
     pub top: f64,
@@ -58,7 +58,7 @@ impl Into<win::Thickness> for Thickness {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct CornerRadius {
     top_left: f64,
     top_right: f64,
@@ -85,7 +85,7 @@ impl Into<win::CornerRadius> for CornerRadius {
 }
 
 
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum ResourceValue {
     Color(Color),
     Thickness(Thickness),

@@ -7,7 +7,7 @@ use windows_reactor::*;
 use std::sync::{OnceLock};
 use tokio::runtime::{Builder, Handle};
 
-use crate::components::main_window::MainWindow;
+use crate::components::app;
 
 pub mod extensions;
 pub mod components;
@@ -38,5 +38,5 @@ pub fn tokio_handle() -> &'static Handle {
 
 fn main() -> windows_core::Result<()> {
     unsafe { AttachConsole(ATTACH_PARENT_PROCESS); }
-    App::run_component::<MainWindow>(())
+    App::run_component::<app::App>(())
 }

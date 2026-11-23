@@ -4,5 +4,6 @@
 /winmd-folder
 /WinAppSDKDownloader
 /windows-rs
+/winmd
 src/helpers/bindings.rs
 Cargo.lock

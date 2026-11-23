@@ -7,9 +7,9 @@ use windows_reactor::*;
 use tokio::sync::mpsc;
 
 use crate::components::main_window;
+use crate::components::app::App;
 use crate::network::{client, protocol};
 use crate::helpers::typography::*;
-use crate::helpers::styles;
 
 pub struct ClientPage {
     id: uuid::Uuid,
@@ -56,32 +56,16 @@ impl PartialEq for Input {
     }
 }
 
-struct MessageContext<'a>(client::DisplayMessage, &'a mut ViewContext<ClientPage>, Option<uuid::Uuid>);
+struct MessageContext(client::DisplayMessage, Option<uuid::Uuid>);
 
-impl Into<View> for MessageContext<'_> {
+impl Into<View> for MessageContext {
     fn into(self) -> View {
-        let MessageContext(message, context, id_on_server) = self;
-        let styles = context.use_context(&main_window::STYLES);
+        let MessageContext(message, id_on_server) = self;
 
-        let card_bg: Option<Brush> = match styles.get("CardBackgroundFillColorSecondaryBrush") {
-            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
-            _ => None,
-        };
-
-        let highlight_bg: Option<Brush> = match styles.get("AccentFillColorTertiaryBrush") {
-            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
-            _ => None,
-        };
-
-        let highlight_fg: Option<Brush> = match styles.get("TextOnAccentFillColorPrimaryBrush") {
-            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
-            _ => None,
-        };
-
-        let info_bg: Option<Brush> = match styles.get("SolidBackgroundFillColorBaseAltBrush") {
-            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
-            _ => None,
-        };
+        let card_bg = App::get_brush("CardBackgroundFillColorSecondaryBrush");
+        let highlight_bg = App::get_brush("AccentFillColorTertiaryBrush");
+        let highlight_fg = App::get_brush("TextOnAccentFillColorPrimaryBrush");
+        let info_bg = App::get_brush("SolidBackgroundFillColorBaseAltBrush");
 
         ListViewItem::new()
             .horizontal_alignment(HorizontalAlignment::Stretch)
@@ -255,20 +239,11 @@ impl ClientPage {
         let messages: Vec<DataItem> = input.data.display.iter()
             .cloned()
             .enumerate()
-            .map(|(i, m)| DataItem::new(format!("{i}"), format!("{i}")).content(MessageContext(m, context, input.data.id_on_server)))
+            .map(|(i, m)| DataItem::new(format!("{i}"), format!("{i}")).content(MessageContext(m, input.data.id_on_server)))
             .collect();
 
-        let styles = context.use_context(&main_window::STYLES);
-
-        let chat_bg: Option<Brush> = match styles.get("LayerOnMicaBaseAltFillColorDefaultBrush") {
-            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
-            _ => None,
-        };
-
-        let chat_border: Option<Brush> = match styles.get("CardStrokeColorDefaultBrush") {
-            Some(styles::ResourceValue::Color(color)) => Some(color.to_owned().into()),
-            _ => None,
-        };
+        let chat_bg = App::get_brush("LayerOnMicaBaseAltFillColorDefaultBrush");
+        let chat_border = App::get_brush("CardStrokeColorDefaultBrush");
 
         let mut list = Border::new()
             .grid_row(0)
@@ -277,10 +252,13 @@ impl ClientPage {
             .corner_radius(4.0)
             .padding(Thickness::new(0.0, 8.0, 0.0, 8.0))
             .content(
-                ListView::new()
-                    .selection_mode(ListViewSelectionMode::None)
-                    .relative_align_bottom()
-                    .items(messages)
+                ScrollView::new()
+                    .vertical_anchor_ratio(1.0)
+                    .content(
+                        ListView::new()
+                            .selection_mode(ListViewSelectionMode::None)
+                            .items(messages)
+                    )
             );
 
         if let Some(brush) = chat_bg {
@@ -411,9 +389,7 @@ impl Component for ClientPage {
         let mut border = Border::new()
             .vertical_alignment(VerticalAlignment::Stretch);
 
-        let styles = context.use_context(&main_window::STYLES);
-
-        if let Some(styles::ResourceValue::Color(tabview_bg)) = styles.get("TabViewItemHeaderBackgroundSelected") {
+        if let Some(tabview_bg) = App::get_brush("TabViewItemHeaderBackgroundSelected") {
             border = border.background(tabview_bg.to_owned());
         }
 
