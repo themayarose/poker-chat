@@ -8,12 +8,12 @@
 //! Call from the UI thread, after the WinUI `Application` has been created (for example from a
 //! component's `view`/`update`, or any callback that runs on the UI thread).
 
-use crate::helpers::winui::Microsoft::UI::Xaml::{
-    Application, ApplicationTheme, CornerRadius as XamlCornerRadius, Media::SolidColorBrush,
+use crate::helpers::winui::{
+    Application, ApplicationTheme, CornerRadius as XamlCornerRadius, SolidColorBrush,
     ResourceDictionary, Thickness as XamlThickness,
 };
-use crate::helpers::winui::Windows::Foundation::{IReference, PropertyValue};
-use crate::helpers::winui::Windows::UI::Color as WinColor;
+use crate::helpers::winui::{IReference, PropertyValue};
+use crate::helpers::winui::Color as WinColor;
 use windows_core::{HSTRING, IInspectable, Interface, Result};
 use windows_reactor::{Color, CornerRadius, ResourceValue, Thickness, WindowTheme};
 

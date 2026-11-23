@@ -48,7 +48,7 @@ impl Thickness {
 
 impl From<win::Thickness> for Thickness {
     fn from(value: win::Thickness) -> Self {
-        Thickness::new(value.left(), value.top(), value.right(), value.bottom())
+        Thickness::new(value.left, value.top, value.right, value.bottom)
     }
 }
 
@@ -74,7 +74,7 @@ impl CornerRadius {
 
 impl From<win::CornerRadius> for CornerRadius {
     fn from(value: win::CornerRadius) -> Self {
-        CornerRadius::new(value.top_left(), value.top_right(), value.bottom_right(), value.bottom_left())
+        CornerRadius::new(value.top_left, value.top_right, value.bottom_right, value.bottom_left)
     }
 }
 

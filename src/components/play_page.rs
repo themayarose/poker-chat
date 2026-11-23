@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use windows_reactor::*;
 
 use crate::components::{main_window, client_page, client_page::ClientPage};
@@ -23,7 +25,7 @@ impl PartialEq for Input {
 #[derive(Clone)]
 pub enum Message {
     CreateNewClient(main_window::Sender),
-    RemoveClient(main_window::Sender, String),
+    RemoveClient(main_window::Sender, Option<String>),
     SelectionChanged(main_window::Sender, Option<usize>),
     NoOp,
 }
@@ -60,13 +62,14 @@ impl Component for PlayPage {
                     Err(err) => tx.send(err.into()),
                 };
             },
-            Message::RemoveClient(tx, id) => {
+            Message::RemoveClient(tx, Some(id)) => {
                 let _ = tx.send(main_window::Message::ClientRemoved(id));
             },
             Message::SelectionChanged(tx, index) => {
                 let _ = tx.send(main_window::Message::ClientSelected(index));
             },
             Message::NoOp => {},
+            _ => {},
         }
     }
 
@@ -83,7 +86,8 @@ impl Component for PlayPage {
             .selected_index(selected_client)
             .on_add_tab_button_click(context.message(Message::CreateNewClient(input.window_tx.clone())))
             .on_selection_changed(context.callback(move |index| Message::SelectionChanged(tx1.clone(), index)))
-            .on_close_requested(context.callback(move |id| Message::RemoveClient(tx2.clone(), id)))
-            .collection_slot(TabViewSlot::TabItems, clients)
+            .on_close_requested(context.callback(move |id: Key| Message::RemoveClient(tx2.clone(), id.as_str().and_then(|id| String::from_str(id).ok()))))
+            .keyed_tab_items(clients)
+            .into()
     }
 }

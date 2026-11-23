@@ -35,5 +35,6 @@ impl Component for SettingsPage {
                     .grid_row(0)
                     .into(),
             ] as [View; _])
+            .into()
     }
 }

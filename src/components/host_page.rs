@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::rc::Rc;
 
 use windows_reactor::*;
 
@@ -120,7 +121,7 @@ impl Component for HostPage {
                     .is_enabled(!input.server_is_running)
                     .vertical_alignment(VerticalAlignment::Top)
                     .text(self.url.clone())
-                    .on_text_changed(context.callback(Message::ServerUrlChanged))
+                    .on_text_changed(context.callback(|it: Rc<str>| Message::ServerUrlChanged(it.to_string())))
                     .into(),
                 StackPanel::new()
                     .grid_row(3)
@@ -140,7 +141,9 @@ impl Component for HostPage {
                             .content("Stop server".to_string())
                             .into(),
                     ] as [View; _])
+                    .into()
             ] as [View; _])
+            .into()
     }
 }
 

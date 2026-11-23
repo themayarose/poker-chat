@@ -3,4 +3,6 @@
 /GetWinMDFiles.ps1
 /winmd-folder
 /WinAppSDKDownloader
+/windows-rs
+src/helpers/bindings.rs
 Cargo.lock

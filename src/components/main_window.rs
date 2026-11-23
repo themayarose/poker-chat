@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::net::SocketAddr;
 use std::error;
@@ -170,31 +171,28 @@ impl Error {
 }
 
 impl MainWindow {
-    fn make_navigation_item(&self, display_name: impl Into<String>, tag: Page, icon: impl Into<View>) -> (String, View) {
-        let item_slot = |(a, b): (NavigationViewItemSlot, View)| SlotView::new(a, b);
+    fn make_navigation_item(&self, display_name: impl Into<String>, tag: Page, icon: impl Into<Icon>) -> NavigationViewItem {
         let is_selected = |tag: Page| self.selected_page == tag;
+        let tag_str: String = tag.into();
 
-        (tag.into(), NavigationViewItem::new()
+        NavigationViewItem::new()
             .is_selected(is_selected(tag))
-            .tag(tag)
-            .slots([
-                (NavigationViewItemSlot::Icon, icon.into()),
-                (NavigationViewItemSlot::Content, display_name.into().into()),
-            ].map(item_slot)),
-        )
+            .tag(tag_str)
+            .icon(icon)
+            .content(display_name.into())
     }
 
-    fn get_navigation_items(&self) -> Vec<(String, View)> {
-        let play_icon = FontIcon::new().glyph("\u{E7FC}");
-        let host_icon = FontIcon::new().glyph("\u{F191}");
+    fn get_navigation_items(&self) -> Vec<View> {
+        let play_icon = Icon::font("\u{E7FC}");
+        let host_icon = Icon::font("\u{F191}");
 
         vec![
-            self.make_navigation_item("Play", Page::Play, play_icon),
-            self.make_navigation_item("Host", Page::Host, host_icon),
+            self.make_navigation_item("Play", Page::Play, play_icon).into(),
+            self.make_navigation_item("Host", Page::Host, host_icon).into(),
         ]
     }
 
-    fn get_error_dialog(&self, context: &mut ViewContext<Self>) -> View {
+    fn get_error_dialog(&self, context: &mut ViewContext<Self>) -> ContentDialog {
         let error = self.display_error.clone();
 
         ContentDialog::new()
@@ -204,7 +202,6 @@ impl MainWindow {
             .title(error.clone().and_then(|err| Some(err.title.clone())).unwrap_or("Error not found".into()))
             .on_closed(context.callback(|_| Message::ErrorDismissed))
             .content(error.and_then(|err| Some(err.message.clone())).unwrap_or("Message not found".into()))
-            .into()
     }
 
     fn get_navigation_view(&self, context: &mut ViewContext<Self>, view: View) -> View {
@@ -212,9 +209,10 @@ impl MainWindow {
             .vertical_alignment(VerticalAlignment::Stretch)
             .rows([GridLength::Pixel(0.0), GridLength::STAR])
             .children([
-                self.get_error_dialog(context),
-                Border::new().grid_row(1).content(view),
-            ]);
+                Border::new().grid_row(1).content(view).into(),
+            ] as [View; _])
+            .content_dialog(self.get_error_dialog(context).into())
+            ;
 
         NavigationView::new()
             .vertical_alignment(VerticalAlignment::Stretch)
@@ -223,25 +221,21 @@ impl MainWindow {
             .is_settings_visible(true)
             .pane_display_mode(NavigationViewPaneDisplayMode::Left)
             .is_pane_open(self.is_pane_open)
-            .on_selected_tag_changed(context.callback(Message::SelectedTagChanged))
-            .slots([
-                SlotView::collection(NavigationViewSlot::MenuItems, self.get_navigation_items()),
-                SlotView::new(NavigationViewSlot::Content, panel),
-            ])
+            .menu_items(self.get_navigation_items())
+            .content(panel)
+            .on_selected_tag_changed(context.callback(|tag: Option<Rc<str>>| Message::SelectedTagChanged(tag.map(|tag| tag.to_string()))))
+            .into()
     }
 
     fn get_titlebar(&self, context: &mut ViewContext<Self>) -> View {
-        let item_slot = |(a, b): (TitleBarSlot, View)| SlotView::new(a, b);
-
         context.titlebar("PokerChat")
-            .is_pane_toggle_button_visible(Some(true))
-            .is_back_button_visible(Some(false))
+            .is_pane_toggle_button_visible(true)
+            .is_back_button_visible(false)
             .on_pane_toggle_requested(context.message(Message::PaneOpenChanged))
             .subtitle("Simple poker server/client")
-            .slots([
-                (TitleBarSlot::RightHeader, self.header_message.clone().into()),
-                (TitleBarSlot::Content, self.server_url.clone().into()),
-            ].map(item_slot))
+            .right_header(View::from(self.header_message.clone()))
+            .content(View::from(self.server_url.clone()))
+            .into()
     }
 
     fn get_resources() -> HashMap<String, styles::ResourceValue> {
@@ -298,6 +292,11 @@ impl Component for MainWindow {
             Err(e) => context.sender().send(e.into()),
         };
 
+        let resources = Self::get_resources();
+        let count = resources.iter().count();
+
+        println!("count: {count}");
+
         MainWindow {
             tx: tx,
             is_pane_open: false,
@@ -311,7 +310,7 @@ impl Component for MainWindow {
             server_token: None,
             error_queue: VecDeque::new(),
             display_error: None,
-            styles: Self::get_resources(),
+            styles: resources,
         }
     }
 
@@ -353,7 +352,7 @@ impl Component for MainWindow {
             Message::ClientCreated(client) => {
                 self.clients.push((client.clone(), None));
 
-                context.sender().send(Message::ClientShouldFlush(client.id));
+                let _ = context.sender().send(Message::ClientShouldFlush(client.id));
             },
             Message::ClientSelected(index) => {
                 self.selected_client = index;
@@ -382,7 +381,7 @@ impl Component for MainWindow {
 
                             *client_info = (client.clone(), Some(token));
 
-                            context.sender().send(Message::ClientShouldFlush(id));
+                            let _ = context.sender().send(Message::ClientShouldFlush(id));
 
                             Some(())
                         }
@@ -442,7 +441,7 @@ impl Component for MainWindow {
 
 
             Message::ExternalMessage(rx, msg) => {
-                context.sender().send(*msg);
+                let _ = context.sender().send(*msg);
 
                 context.spawn_future(recv_message(rx));
             },
@@ -510,7 +509,7 @@ impl Component for MainWindow {
 
         let navigation_view = self.get_navigation_view(context, frame);
 
-        View::provide(&STYLES, self.styles.clone(),
+        provide(&STYLES, self.styles.clone(),
             context.with_titlebar(WindowBackdrop::Mica, titlebar, navigation_view)
         )
     }

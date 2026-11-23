@@ -17,7 +17,7 @@ pub trait ComponentContextExt<C> where C: HasCancelMessage, <C as Component>::Me
         where F: 'static + Send + Sync + Future<Output = Result<<C as Component>::Message>>;
 }
 
-impl<C> ComponentContextExt<C> for ComponentContext<C> where C: HasCancelMessage, <C as Component>::Message: Send + From<Box<dyn error::Error>> {
+impl<C> ComponentContextExt<C> for ComponentContext<'_, C> where C: HasCancelMessage, <C as Component>::Message: Send + From<Box<dyn error::Error>> {
     fn spawn_future<F>(&self, f: F) -> CancellationToken where F: 'static + Send + Sync + Future<Output = <C as Component>::Message> {
         let handle = crate::tokio_handle();
         let token = CancellationToken::new();

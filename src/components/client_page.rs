@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use chrono::{self, DateTime, Local};
 
 use windows_reactor::*;
@@ -92,10 +94,31 @@ impl Into<View> for MessageContext<'_> {
                         let highlight_fg = if is_self { highlight_fg } else { None };
                         let alignment = if is_self { HorizontalAlignment::Right } else { HorizontalAlignment::Left };
 
-                        Border::new()
+                        let mut nickname = body_strong(nickname)
+                            .vertical_alignment(VerticalAlignment::Bottom)
+                            .grid_row(0)
+                            .grid_column(0);
+
+                        let mut timestamp = caption(format!("{}", now.format("%H:%M:%S")))
+                            .vertical_alignment(VerticalAlignment::Bottom)
+                            .grid_row(0)
+                            .grid_column(1);
+
+                        let mut message = body(content)
+                            .text_wrapping(TextWrapping::WrapWholeWords)
+                            .grid_row(1)
+                            .grid_column(0)
+                            .grid_column_span(2);
+
+                        if let Some(brush) = highlight_fg {
+                            nickname = nickname.foreground(brush);
+                            timestamp = timestamp.foreground(brush);
+                            message = message.foreground(brush);
+                        }
+
+                        let mut border = Border::new()
                             .corner_radius(4.0)
                             .horizontal_alignment(alignment)
-                            .background_optional(highlight_bg)
                             .padding(12.0)
                             .content(
                                 Grid::new()
@@ -104,24 +127,17 @@ impl Into<View> for MessageContext<'_> {
                                     .rows([GridLength::Auto, GridLength::Auto])
                                     .columns([GridLength::STAR, GridLength::Auto])
                                     .children([
-                                        body_strong(nickname)
-                                            .vertical_alignment(VerticalAlignment::Bottom)
-                                            .grid_row(0)
-                                            .grid_column(0)
-                                            .foreground_optional(highlight_fg),
-                                        caption(format!("{}", now.format("%H:%M:%S")))
-                                            .vertical_alignment(VerticalAlignment::Bottom)
-                                            .grid_row(0)
-                                            .grid_column(1)
-                                            .foreground_optional(highlight_fg),
-                                        body(content)
-                                            .text_wrapping(TextWrapping::WrapWholeWords)
-                                            .grid_row(1)
-                                            .grid_column(0)
-                                            .grid_column_span(2)
-                                            .foreground_optional(highlight_fg),
-                                    ])
-                            )
+                                        nickname.into(),
+                                        timestamp.into(),
+                                        message.into(),
+                                    ] as [View; _])
+                            );
+
+                        if let Some(brush) = highlight_bg {
+                            border = border.background(brush);
+                        }
+
+                        border.into()
                     },
                     client::DisplayMessage::Joined(now, _, nickname) => {
                         control_message(now, info_bg, format!("{nickname} has joined the chat."))
@@ -145,21 +161,27 @@ impl Into<View> for MessageContext<'_> {
                     },
                 }
             )
+            .into()
     }
 }
 
 fn control_message(now: DateTime<Local>, color: Option<Brush>, text: impl Into<String>) -> View {
-    Border::new()
+    let mut border = Border::new()
         .corner_radius(4.0)
         .horizontal_alignment(HorizontalAlignment::Center)
-        .background_optional(color)
         .padding(8.0)
         .content(StackPanel::new().orientation(Orientation::Vertical).spacing(2.0)
             .children([
-                caption(format!("{}", now.format("%H:%M:%S"))).horizontal_alignment(HorizontalAlignment::Center),
-                body(text).horizontal_alignment(HorizontalAlignment::Center),
-            ])
-        )
+                caption(format!("{}", now.format("%H:%M:%S"))).horizontal_alignment(HorizontalAlignment::Center).into(),
+                body(text).horizontal_alignment(HorizontalAlignment::Center).into(),
+            ] as [View; _])
+        );
+
+    if let Some(brush) = color {
+        border = border.background(brush);
+    }
+
+    border.into()
 }
 
 impl ClientPage {
@@ -183,7 +205,7 @@ impl ClientPage {
                     .vertical_alignment(VerticalAlignment::Top)
                     .text(self.nickname.clone())
                     .is_enabled(!input.data.connected)
-                    .on_text_changed(context.callback(Message::PreConnectionNicknameChanged))
+                    .on_text_changed(context.callback(|it: Rc<str>| Message::PreConnectionNicknameChanged(it.to_string())))
                     .into(),
                 body("URL:")
                     .into(),
@@ -191,7 +213,7 @@ impl ClientPage {
                     .vertical_alignment(VerticalAlignment::Top)
                     .text(url)
                     .is_enabled(!input.data.connected)
-                    .on_text_changed(context.callback(Message::PreConnectionUrlChanged))
+                    .on_text_changed(context.callback(|it: Rc<str>| Message::PreConnectionUrlChanged(it.to_string())))
                     .into(),
                 Button::new()
                     .on_click(context.message(Message::RequestConnection))
@@ -205,7 +227,7 @@ impl ClientPage {
                     .into(),
             ] as [View; _]);
 
-        connect
+        connect.into()
     }
 
     fn layout(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
@@ -217,7 +239,8 @@ impl ClientPage {
             .children([
                 self.game(input, context),
                 self.chat(input, context),
-            ] as [View; _])
+            ])
+            .into()
     }
 
     fn game(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
@@ -229,10 +252,10 @@ impl ClientPage {
     }
 
     fn chat(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
-        let messages: Vec<KeyedView> = input.data.display.iter()
+        let messages: Vec<DataItem> = input.data.display.iter()
             .cloned()
             .enumerate()
-            .map(|(i, m)| KeyedView::new(i, MessageContext(m, context, input.data.id_on_server)))
+            .map(|(i, m)| DataItem::new(format!("{i}"), format!("{i}")).content(MessageContext(m, context, input.data.id_on_server)))
             .collect();
 
         let styles = context.use_context(&main_window::STYLES);
@@ -247,6 +270,27 @@ impl ClientPage {
             _ => None,
         };
 
+        let mut list = Border::new()
+            .grid_row(0)
+            .grid_column_span(2)
+            .border_thickness(1.0)
+            .corner_radius(4.0)
+            .padding(Thickness::new(0.0, 8.0, 0.0, 8.0))
+            .content(
+                ListView::new()
+                    .selection_mode(ListViewSelectionMode::None)
+                    .relative_align_bottom()
+                    .items(messages)
+            );
+
+        if let Some(brush) = chat_bg {
+            list = list.background(brush);
+        }
+
+        if let Some(brush) = chat_border {
+            list = list.border_brush(brush);
+
+        }
 
         Grid::new()
             .grid_column(1)
@@ -255,19 +299,7 @@ impl ClientPage {
             .row_spacing(8.0)
             .column_spacing(8.0)
             .children([
-                Border::new()
-                    .grid_row(0)
-                    .grid_column_span(2)
-                    .background_optional(chat_bg)
-                    .border_brush_optional(chat_border)
-                    .border_thickness(1.0)
-                    .corner_radius(4.0)
-                    .padding(Thickness::new(0.0, 8.0, 0.0, 8.0))
-                    .content(
-                        ListView::new()
-                            .selection_mode(ListViewSelectionMode::None)
-                            .collection_slot(ListViewSlot::Items, messages)
-                    ),
+                list.into(),
                 Grid::new()
                     .grid_row(1)
                     .grid_column(0)
@@ -282,16 +314,19 @@ impl ClientPage {
                         TextBox::new()
                             .text(self.message.clone())
                             .is_enabled(input.data.connected)
-                            .on_text_changed(context.callback(Message::TextChanged))
+                            .on_text_changed(context.callback(|it: Rc<str>| Message::TextChanged(it.to_string())))
                             .into()
-                    ] as [View; _]),
+                    ] as [View; _])
+                    .into(),
                 Button::new()
                     .grid_row(1)
                     .grid_column(1)
                     .is_enabled(input.data.connected)
                     .on_click(context.message(Message::SendText))
-                    .content("Send"),
+                    .content("Send")
+                    .into(),
             ] as [View; _])
+            .into()
     }
 }
 
