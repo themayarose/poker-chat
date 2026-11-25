@@ -96,15 +96,6 @@ impl MainWindow {
     }
 
     fn get_navigation_view(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>, view: View) -> View {
-        let panel = Grid::new()
-            .vertical_alignment(VerticalAlignment::Stretch)
-            .rows([GridLength::Pixel(0.0), GridLength::STAR])
-            .children([
-                Border::new().grid_row(1).content(view).into(),
-            ] as [View; _])
-            .content_dialog(self.get_error_dialog(input, context).into())
-            ;
-
         NavigationView::new()
             .vertical_alignment(VerticalAlignment::Stretch)
             .is_back_button_visible(NavigationViewBackButtonVisible::Collapsed)
@@ -113,8 +104,9 @@ impl MainWindow {
             .pane_display_mode(NavigationViewPaneDisplayMode::Left)
             .is_pane_open(self.is_pane_open)
             .menu_items(self.get_navigation_items())
-            .content(panel)
+            .content(view)
             .on_selected_tag_changed(context.callback(|tag: Option<Rc<str>>| Message::SelectedTagChanged(tag.map(|tag| tag.to_string()))))
+            .content_dialog(self.get_error_dialog(input, context).into())
             .into()
     }
 

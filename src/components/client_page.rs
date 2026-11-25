@@ -54,7 +54,7 @@ impl Into<View> for MessageContext {
 
         Border::new()
             .horizontal_alignment(HorizontalAlignment::Stretch)
-            .margin(Thickness::new(12.0, 0.0, 12.0, 12.0))
+            .margin(Thickness::new(8.0, 8.0, 8.0, 8.0))
             .content(
                 match message {
                     client::DisplayMessage::Text(now, id, nickname, content) => {
@@ -235,14 +235,11 @@ impl ClientPage {
             .grid_column_span(2)
             .border_thickness(1.0)
             .corner_radius(4.0)
-            .padding(Thickness::new(0.0, 8.0, 0.0, 8.0))
+            .padding(0.0)
             .content(
                 ScrollView::new()
                     .vertical_anchor_ratio(1.0)
-                    .content(
-                        ItemsRepeater::new()
-                            .items(messages)
-                    )
+                    .content(ItemsRepeater::new().items(messages))
             );
 
         if let Some(brush) = chat_bg {
@@ -266,11 +263,11 @@ impl ClientPage {
                     .grid_row(1)
                     .grid_column(0)
                     .key_accelerators(KeyAccelerators::new([
-                            KeyAccelerator::new(
-                                AcceleratorKey::Enter,
-                                AcceleratorModifiers::None,
-                                context.message(Message::SendText)
-                            ),
+                        KeyAccelerator::new(
+                            AcceleratorKey::Enter,
+                            AcceleratorModifiers::None,
+                            context.message(Message::SendText)
+                        ),
                     ]))
                     .children([
                         TextBox::new()
