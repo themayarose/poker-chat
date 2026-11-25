@@ -21,7 +21,7 @@ use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use crate::network::protocol::ServerMessage;
 use crate::network::{protocol, client};
-use crate::components::main_window;
+use crate::components::app;
 use crate::tokio_handle;
 
 pub struct Server {
@@ -69,14 +69,14 @@ impl TryInto<client::User> for &Client {
     }
 }
 
-fn err<S>(tx: &main_window::Sender, message: S) where S: Into<String> {
-    let window_msg = main_window::Message::err("SERVER", message);
-    let _ = tx.send(window_msg);
+fn err<S>(message: S) where S: Into<String> {
+    let window_msg = app::Message::err("SERVER", message);
+    app::App::tx(window_msg);
 }
 
-fn log<S>(tx: &main_window::Sender, message: S) where S: Into<String> {
-    let window_msg = main_window::Message::log("SERVER", message);
-    let _ = tx.send(window_msg);
+fn log<S>(message: S) where S: Into<String> {
+    let window_msg = app::Message::log("SERVER", message);
+    app::App::tx(window_msg);
 }
 
 fn make_acceptor() -> Result<TlsAcceptor, Box<dyn error::Error>> {
@@ -105,21 +105,20 @@ impl Server {
         }))
     }
 
-    pub async fn shutdown(self: Arc<Self>) -> main_window::Message {
+    pub async fn shutdown(self: Arc<Self>) -> app::Message {
         for token in (*self.tasks.lock().await).iter() {
             token.cancel();
         }
 
         *self.tasks.lock().await = vec![];
 
-        main_window::Message::NoOp
+        app::Message::NoOp
     }
 
-    pub async fn listen(self: Arc<Self>, window_tx: main_window::Sender) -> main_window::Message {
+    pub async fn listen(self: Arc<Self>) -> app::Message {
         loop {
             match self.listener.accept().await {
                 Ok((stream, address)) => {
-                    let tx = window_tx.clone();
                     let token = CancellationToken::new();
 
                     let this1 = self.clone();
@@ -133,8 +132,7 @@ impl Server {
                             tokio::select! {
                                 _ = this1.on_client_connected(
                                     stream,
-                                    address,
-                                    tx
+                                    address
                                 ) => { Ok(()) },
                                 _ = token1.cancelled() => { Err(()) },
                             }
@@ -148,24 +146,24 @@ impl Server {
                     (*self.tasks.lock().await).push(token);
                 },
                 Err(e) => {
-                    err(&window_tx, format!("Connection error: {e:?}"));
+                    err(format!("Connection error: {e:?}"));
                 },
             }
         }
     }
 
-    pub async fn on_client_connected(self: Arc<Self>, stream: TcpStream, addr: SocketAddr, window_tx: main_window::Sender) {
+    pub async fn on_client_connected(self: Arc<Self>, stream: TcpStream, addr: SocketAddr) {
         let tls = match self.acceptor.accept(stream).await {
             Ok(tls) => tls,
             Err(e) => {
-                err(&window_tx, format!("TLS handshake failed: {e:?}"));
+                err(format!("TLS handshake failed: {e:?}"));
                 return;
             },
         };
         let ws = match accept_async(tls).await {
             Ok(ws) => ws,
             Err(e) => {
-                err(&window_tx, format!("WS handshake failed: {e:?}"));
+                err(format!("WS handshake failed: {e:?}"));
                 return;
             },
         };
@@ -220,7 +218,7 @@ impl Server {
                         result.ok_or(tungstenite::Error::AlreadyClosed)?;
                     },
                     Err(err) => {
-                        log(&window_tx, format!("Deserialization error: {addr} sent a non msgpack message {err}"));
+                        log(format!("Deserialization error: {addr} sent a non msgpack message {err}"));
 
                         Err(tungstenite::Error::AlreadyClosed)?;
                     }
@@ -241,9 +239,9 @@ impl Server {
             _ = process_source => {},
         }
 
-        let _ = window_tx.send(main_window::Message::ServerClientDisconnected(addr));
+        app::App::tx(app::Message::ServerClientDisconnected(addr));
 
-        log(&window_tx, format!("Disconnected: {id} ({addr}) disconnected"));
+        log(format!("Disconnected: {id} ({addr}) disconnected"));
 
         self.clients.lock().await.remove(&id);
     }

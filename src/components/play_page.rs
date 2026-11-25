@@ -1,36 +1,26 @@
-use std::str::FromStr;
-
 use windows_reactor::*;
 
-use crate::components::{main_window, client_page, client_page::ClientPage};
+use crate::components::{app, client_page, client_page::ClientPage};
 use crate::network::client;
 
 pub struct PlayPage {
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Input {
-    pub window_tx: main_window::Sender,
     pub clients: Vec<client::ClientData>,
     pub selected_client: Option<usize>,
 }
 
-impl PartialEq for Input {
-    fn eq(&self, other: &Self) -> bool {
-        self.clients == other.clients &&
-        self.selected_client == other.selected_client
-    }
-}
-
 #[derive(Clone)]
 pub enum Message {
-    CreateNewClient(main_window::Sender),
-    RemoveClient(main_window::Sender, Option<String>),
-    SelectionChanged(main_window::Sender, Option<usize>),
+    CreateNewClient,
+    RemoveClient(Option<String>),
+    SelectionChanged(Option<usize>),
     NoOp,
 }
 
-fn keyed_clients(tx: &main_window::Sender, clients: &Vec<client::ClientData>) -> Vec<KeyedView> {
+fn keyed_clients(clients: &Vec<client::ClientData>) -> Vec<KeyedView> {
     clients.iter()
         .cloned()
         .map(|client| KeyedView::new(
@@ -38,7 +28,6 @@ fn keyed_clients(tx: &main_window::Sender, clients: &Vec<client::ClientData>) ->
             View::component::<ClientPage>(
                 client_page::Input {
                     data: client,
-                    window_tx: tx.clone(),
                 }
             )
         ))
@@ -56,17 +45,17 @@ impl Component for PlayPage {
 
     fn update(&mut self, message: Self::Message, _context: &ComponentContext<Self>) {
         match message {
-            Message::CreateNewClient(tx) => {
-                let _ = match client::Client::new() {
-                    Ok(client) => tx.send(main_window::Message::ClientCreated(client)),
-                    Err(err) => tx.send(err.into()),
+            Message::CreateNewClient => {
+                match client::Client::new() {
+                    Ok(client) => app::App::tx(app::Message::ClientCreated(client)),
+                    Err(err) => app::App::tx(err.into()),
                 };
             },
-            Message::RemoveClient(tx, Some(id)) => {
-                let _ = tx.send(main_window::Message::ClientRemoved(id));
+            Message::RemoveClient(Some(id)) => {
+                app::App::tx(app::Message::ClientRemoved(id));
             },
-            Message::SelectionChanged(tx, index) => {
-                let _ = tx.send(main_window::Message::ClientSelected(index));
+            Message::SelectionChanged(index) => {
+                app::App::tx(app::Message::ClientSelected(index));
             },
             Message::NoOp => {},
             _ => {},
@@ -74,20 +63,22 @@ impl Component for PlayPage {
     }
 
     fn view(&self, input: &Self::Input, context: &mut ViewContext<Self>) -> View {
-        let clients = keyed_clients(&input.window_tx, &input.clients);
+        let clients = keyed_clients(&input.clients);
         let selected_client = input.selected_client;
-
-        let tx1 = input.window_tx.clone();
-        let tx2 = input.window_tx.clone();
 
         TabView::new()
             .vertical_alignment(VerticalAlignment::Stretch)
             .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
             .selected_index(selected_client)
-            .on_add_tab_button_click(context.message(Message::CreateNewClient(input.window_tx.clone())))
-            .on_selection_changed(context.callback(move |index| Message::SelectionChanged(tx1.clone(), index)))
-            .on_close_requested(context.callback(move |id: Key| Message::RemoveClient(tx2.clone(), id.as_str().and_then(|id| String::from_str(id).ok()))))
+            .on_add_tab_button_click(context.message(Message::CreateNewClient))
+            .on_selection_changed(context.callback(Message::SelectionChanged))
+            .on_close_requested(context.callback(move |id: Key| {
+                let id = id.as_str().and_then(|it| Some(it.to_string()));
+
+                Message::RemoveClient(id)
+            }))
             .keyed_tab_items(clients)
+            .tooltip("")
             .into()
     }
 }

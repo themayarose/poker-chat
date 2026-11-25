@@ -1,20 +1,12 @@
 use windows_reactor::*;
 
-use crate::components::main_window;
 use crate::helpers::typography::*;
 
 pub struct SettingsPage {
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Input {
-    pub window_tx: main_window::Sender,
-}
-
-impl PartialEq for Input {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
 }
 
 impl Component for SettingsPage {

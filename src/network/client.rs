@@ -21,8 +21,9 @@ use rustls::ClientConfig;
 use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
 
+use crate::components::app::{self, App};
 use crate::network::protocol::{ServerMessage, ClientMessage};
-use crate::components::main_window;
+use crate::helpers::error::AppError;
 
 #[derive(Debug)]
 pub struct Client {
@@ -131,19 +132,19 @@ impl ServerCertVerifier for AcceptAnyCert {
 
 
 #[allow(dead_code)]
-fn err<S1, S2>(tx: &main_window::Sender, title: S1, message: S2) where S1: Into<String>, S2: Into<String> {
+fn err<S1, S2>(title: S1, message: S2) where S1: Into<String>, S2: Into<String> {
     let title: String = title.into();
     let message: String = message.into();
-    let window_msg = main_window::Message::err(title, message);
-    let _ = tx.send(window_msg);
+    let window_msg = app::Message::err(title, message);
+    App::tx(window_msg);
 }
 
 #[allow(dead_code)]
-fn log<S1, S2>(tx: &main_window::Sender, title: S1, message: S2) where S1: Into<String>, S2: Into<String> {
+fn log<S1, S2>(title: S1, message: S2) where S1: Into<String>, S2: Into<String> {
     let title: String = title.into();
     let message: String = message.into();
-    let window_msg = main_window::Message::log(title, message);
-    let _ = tx.send(window_msg);
+    let window_msg = app::Message::log(title, message);
+    App::tx(window_msg);
 }
 
 fn make_config() -> Result<ClientConfig, Box<dyn error::Error>> {
@@ -195,7 +196,7 @@ impl Client {
         }
     }
 
-    pub async fn run(&self, window_tx: main_window::Sender, url: &String, nickname: &String) -> Result<main_window::Message, tungstenite::Error> {
+    pub async fn run(&self, url: &String, nickname: &String) -> Result<app::Message, tungstenite::Error> {
         let (tx, mut rx) = mpsc::unbounded_channel::<ClientMessage>();
 
         let url = if !url.starts_with("wss://") { "wss://".to_string() + url } else { url.to_owned() };
@@ -222,12 +223,12 @@ impl Client {
         self.send_join(nickname).await
             .ok_or(tungstenite::Error::ConnectionClosed)?;
 
-        self.request_flush(&window_tx);
+        self.request_flush();
 
         let process_sink = async |client_msg| {
             if self.send(client_msg).await.is_none() {
                 self.disconnect().await;
-                self.request_flush(&window_tx);
+                self.request_flush();
                 Err(tungstenite::Error::ConnectionClosed)?;
             }
 
@@ -265,7 +266,7 @@ impl Client {
                             Ok(Some(DisplayMessage::Pong(Local::now(), Local::now() - time)))
                         },
                         ServerMessage::NoNicknameError => Err(
-                            main_window::Error::err(
+                            AppError::err(
                                 "Server error",
                                 "Nickname not set"
                             )
@@ -276,10 +277,10 @@ impl Client {
                         Ok(Some(display_msg)) => {
                             (*self.display.lock().await).push(display_msg);
 
-                            self.request_flush(&window_tx);
+                            self.request_flush();
                         },
                         Err(window_err) => {
-                            let _ = window_tx.send(window_err.into());
+                            App::tx(window_err.into());
                         },
                         Ok(None) => {},
                     }
@@ -300,8 +301,8 @@ impl Client {
         }
     }
 
-    pub fn request_flush(&self, window_tx: &main_window::Sender) {
-        let _ = window_tx.send(main_window::Message::ClientShouldFlush(self.id));
+    pub fn request_flush(&self) {
+        App::tx(app::Message::ClientShouldFlush(self.id));
     }
 
     pub async fn on_welcome(&self, new_id: &uuid::Uuid) {
@@ -317,14 +318,14 @@ impl Client {
         None
     }
 
-    pub async fn on_nickname_change(&self, id: uuid::Uuid, new_nickname: &String) -> Result<Option<DisplayMessage>, main_window::Error> {
+    pub async fn on_nickname_change(&self, id: uuid::Uuid, new_nickname: &String) -> Result<Option<DisplayMessage>, AppError> {
         let old_nickname: String;
 
         {
             let mut guard = self.users.lock().await;
             let user = guard.get_mut(&id)
                 .ok_or(
-                    main_window::Error::log(
+                    AppError::log(
                         "Unsynced userlist",
                         "Received a nickname change from an unknown user"
                     )
@@ -341,11 +342,11 @@ impl Client {
         Ok(Some(DisplayMessage::NowKnownAs(Local::now(), id, old_nickname, new_nickname.clone())))
     }
 
-    pub async fn on_text_message(&self, id: uuid::Uuid, text: &String) -> Result<Option<DisplayMessage>, main_window::Error> {
+    pub async fn on_text_message(&self, id: uuid::Uuid, text: &String) -> Result<Option<DisplayMessage>, AppError> {
         self.users.lock().await.get(&id)
             .map(|user| Some(DisplayMessage::Text(Local::now(), id.to_owned(), user.nickname.clone(), text.clone())))
             .ok_or(
-                main_window::Error::log(
+                AppError::log(
                     "Unsynced userlist",
                     "Received a message from an unknown user"
                 )
@@ -360,11 +361,11 @@ impl Client {
         Some(DisplayMessage::Joined(Local::now(), id, nickname))
     }
 
-    pub async fn on_user_left(&self, id: uuid::Uuid) -> Result<Option<DisplayMessage>, main_window::Error> {
+    pub async fn on_user_left(&self, id: uuid::Uuid) -> Result<Option<DisplayMessage>, AppError> {
         self.users.lock().await.remove(&id)
             .map(|user| Some(DisplayMessage::Left(Local::now(), id, user.nickname)))
             .ok_or(
-                main_window::Error::log(
+                AppError::log(
                     "Unsynced userlist",
                     "Received a left event from an unknown user"
                 )

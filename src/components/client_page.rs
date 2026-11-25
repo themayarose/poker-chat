@@ -6,17 +6,16 @@ use windows_reactor::*;
 
 use tokio::sync::mpsc;
 
-use crate::components::main_window;
-use crate::components::app::App;
+use crate::components::app::{self, App};
 use crate::network::{client, protocol};
 use crate::helpers::typography::*;
+use crate::helpers::error::AppError;
 
 pub struct ClientPage {
     id: uuid::Uuid,
     nickname: String,
     server_url: String,
     connection_tx: Option<mpsc::UnboundedSender<protocol::ClientMessage>>,
-    window_tx: mpsc::UnboundedSender<main_window::Message>,
     message: String,
 }
 
@@ -28,25 +27,12 @@ pub enum Message {
     TextChanged(String),
     SendText,
     Quit,
-    Err(main_window::Error),
+    Err(AppError),
     NoOp,
 }
 
-// impl From<Box<dyn error::Error>> for Message {
-//     fn from(value: Box<dyn error::Error>) -> Self {
-//         Message::Err(value.into())
-//     }
-// }
-
-// impl HasCancelMessage for ClientPage {
-//     fn cancel_message() -> <Self as Component>::Message {
-//        Message::NoOp
-//     }
-// }
-
 #[derive(Clone)]
 pub struct Input {
-    pub window_tx: main_window::Sender,
     pub data: client::ClientData,
 }
 
@@ -65,11 +51,10 @@ impl Into<View> for MessageContext {
         let card_bg = App::get_brush("CardBackgroundFillColorSecondaryBrush");
         let highlight_bg = App::get_brush("AccentFillColorTertiaryBrush");
         let highlight_fg = App::get_brush("TextOnAccentFillColorPrimaryBrush");
-        let info_bg = App::get_brush("SolidBackgroundFillColorBaseAltBrush");
 
-        ListViewItem::new()
+        Border::new()
             .horizontal_alignment(HorizontalAlignment::Stretch)
-            .margin(Thickness::new(0.0, 0.0, 0.0, 12.0))
+            .margin(Thickness::new(12.0, 0.0, 12.0, 12.0))
             .content(
                 match message {
                     client::DisplayMessage::Text(now, id, nickname, content) => {
@@ -124,16 +109,16 @@ impl Into<View> for MessageContext {
                         border.into()
                     },
                     client::DisplayMessage::Joined(now, _, nickname) => {
-                        control_message(now, info_bg, format!("{nickname} has joined the chat."))
+                        control_message(now, format!("{nickname} has joined the chat."))
                     },
                     client::DisplayMessage::Left(now, _, nickname) => {
-                        control_message(now, info_bg, format!("{nickname} has left the chat."))
+                        control_message(now, format!("{nickname} has left the chat."))
                     },
                     client::DisplayMessage::NowKnownAs(now, _, old_nickname, new_nickname) => {
-                        control_message(now, info_bg, format!("{old_nickname} is now known as {new_nickname}."))
+                        control_message(now, format!("{old_nickname} is now known as {new_nickname}."))
                     },
                     client::DisplayMessage::NicknameTaken(now, nickname) => {
-                        control_message(now, info_bg, format!("The nickname {nickname:?} is already taken."))
+                        control_message(now, format!("The nickname {nickname:?} is already taken."))
                     },
                     client::DisplayMessage::Pong(now, delta) => {
                         let delta: f64 = match delta.num_microseconds() {
@@ -141,7 +126,7 @@ impl Into<View> for MessageContext {
                             None => f64::MAX / 1000.0,
                         };
 
-                        control_message(now, info_bg, format!("Lag: {delta}ms"))
+                        control_message(now, format!("Lag: {delta}ms"))
                     },
                 }
             )
@@ -149,7 +134,7 @@ impl Into<View> for MessageContext {
     }
 }
 
-fn control_message(now: DateTime<Local>, color: Option<Brush>, text: impl Into<String>) -> View {
+fn control_message(now: DateTime<Local>, text: impl Into<String>) -> View {
     let mut border = Border::new()
         .corner_radius(4.0)
         .horizontal_alignment(HorizontalAlignment::Center)
@@ -161,7 +146,7 @@ fn control_message(now: DateTime<Local>, color: Option<Brush>, text: impl Into<S
             ] as [View; _])
         );
 
-    if let Some(brush) = color {
+    if let Some(brush) = App::get_brush("SolidBackgroundFillColorBaseAltBrush") {
         border = border.background(brush);
     }
 
@@ -236,10 +221,10 @@ impl ClientPage {
     }
 
     fn chat(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> View {
-        let messages: Vec<DataItem> = input.data.display.iter()
+        let messages: Vec<KeyedView> = input.data.display.iter()
             .cloned()
             .enumerate()
-            .map(|(i, m)| DataItem::new(format!("{i}"), format!("{i}")).content(MessageContext(m, input.data.id_on_server)))
+            .map(|(i, m)| KeyedView::new(i, MessageContext(m, input.data.id_on_server)))
             .collect();
 
         let chat_bg = App::get_brush("LayerOnMicaBaseAltFillColorDefaultBrush");
@@ -255,8 +240,7 @@ impl ClientPage {
                 ScrollView::new()
                     .vertical_anchor_ratio(1.0)
                     .content(
-                        ListView::new()
-                            .selection_mode(ListViewSelectionMode::None)
+                        ItemsRepeater::new()
                             .items(messages)
                     )
             );
@@ -318,14 +302,12 @@ impl Component for ClientPage {
             nickname: input.data.nickname.clone(),
             server_url: input.data.url.clone().unwrap_or("".into()),
             connection_tx: input.data.tx.clone(),
-            window_tx: input.window_tx.clone(),
             message: "".into(),
         }
     }
 
     fn input_changed(&mut self, input: &Self::Input, _context: &ComponentContext<Self>) {
        self.connection_tx = input.data.tx.clone();
-       self.window_tx = input.window_tx.clone();
     }
 
     fn update(&mut self, message: Self::Message, _context: &ComponentContext<Self>) {
@@ -341,7 +323,7 @@ impl Component for ClientPage {
                 let nickname = self.nickname.clone();
                 let url = self.server_url.clone();
 
-                let _ = self.window_tx.send(main_window::Message::ClientConnectionRequested(id, url, nickname));
+                app::App::tx(app::Message::ClientConnectionRequested(id, url, nickname));
             },
             Message::TextChanged(msg) => {
                 self.message = msg;
@@ -357,6 +339,9 @@ impl Component for ClientPage {
                     else if self.message.starts_with("/ping") {
                         let _ = tx.send(protocol::ClientMessage::Ping(Local::now()));
                     }
+                    else if self.message.starts_with("/quit") {
+                        let _ = tx.send(protocol::ClientMessage::Quit);
+                    }
                     else {
                         let _ = tx.send(protocol::ClientMessage::SendMessage(self.message.clone()));
                     }
@@ -367,11 +352,11 @@ impl Component for ClientPage {
             Message::Quit => {
                 if let Some(tx) = self.connection_tx.clone() {
                     let _ = tx.send(protocol::ClientMessage::Quit);
-                    let _ = self.window_tx.send(main_window::Message::ClientDisconnected(self.id));
+                    app::App::tx(app::Message::ClientDisconnected(self.id));
                 }
             },
             Message::Err(err) => {
-                let _ = self.window_tx.send(err.into());
+                app::App::tx(err.into());
             },
             Message::NoOp => {}
         }
@@ -402,6 +387,6 @@ impl Component for ClientPage {
                     .padding(16.0)
                     .content(self.layout(input, context))
             )
-            .tooltip("")
+            .into()
     }
 }

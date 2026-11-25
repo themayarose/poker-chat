@@ -1,93 +1,37 @@
-use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::net::SocketAddr;
-use std::error;
-use std::fmt;
-use std::sync::LazyLock;
 
 use windows_reactor::*;
 
-use tokio::sync::Mutex;
-use tokio_tungstenite::tungstenite;
-use tokio_util::sync::CancellationToken;
-
-use tokio::sync::mpsc;
-
 use crate::extensions::*;
 
+use crate::components::app;
 use crate::components::play_page::{self, PlayPage};
 use crate::components::host_page::{self, HostPage};
 use crate::components::settings_page::{self, SettingsPage};
-use crate::network::{server, client};
-use crate::helpers::styles;
-
-pub type Sender = mpsc::UnboundedSender<Message>;
+use crate::network::client;
+use crate::helpers::error::AppError;
 
 pub struct MainWindow {
-    tx: Sender,
     is_pane_open: bool,
     selected_page: Page,
     header_message: String,
-    clients: Vec<(Arc<client::Client>, Option<CancellationToken>)>,
-    clients_data: Vec<client::ClientData>,
-    selected_client: Option<usize>,
-    server_url: String,
-    server: Option<Arc<server::Server>>,
-    server_token: Option<CancellationToken>,
-    error_queue: VecDeque<Error>,
-    display_error: Option<Error>,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Input {
+    pub server_is_running: bool,
+    pub selected_client: Option<usize>,
+    pub clients_data: Vec<client::ClientData>,
+    pub display_error: Option<AppError>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     PaneOpenChanged,
     SelectedTagChanged(Option<String>),
-
-    ServerConnected(Arc<server::Server>),
-    ServerClientDisconnected(SocketAddr),
-    ServerUrlChanged(String),
-    ServerDisconnected,
-
-    ClientCreated(Arc<client::Client>),
-    ClientSelected(Option<usize>),
-    ClientConnectionRequested(uuid::Uuid, String, String),
-    ClientDisconnected(uuid::Uuid),
-    ClientRemoved(String),
-    ClientShouldFlush(uuid::Uuid),
-    ClientHasFlushed(client::ClientData),
-
-    ExternalMessage(Arc<Mutex<mpsc::UnboundedReceiver<Message>>>, Box<Message>),
-    ExternalMessageFailed(Arc<Mutex<mpsc::UnboundedReceiver<Message>>>),
-
-    Error(Error),
     ErrorDismissed,
     NoOp,
 }
-
-impl From<Error> for Message {
-    fn from(err: Error) -> Self {
-        Message::Error(err)
-    }
-}
-
-impl From<Box<dyn error::Error>> for Message {
-    fn from(err: Box<dyn error::Error>) -> Self {
-        <Box<dyn error::Error> as Into<Error>>::into(err).into()
-    }
-}
-
-impl Message {
-    pub fn err(title: impl Into<String>, message: impl Into<String>) -> Message {
-        Message::Error(Error::err(title, message))
-    }
-
-    pub fn log(title: impl Into<String>, message: impl Into<String>) -> Message {
-        Message::Error(Error::log(title, message))
-    }
-}
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
@@ -95,7 +39,6 @@ pub enum Page {
     Host,
     Settings,
 }
-
 
 impl TryFrom<String> for Page {
     type Error = ();
@@ -114,56 +57,6 @@ impl Into<String> for Page {
             Page::Play => "play".to_string(),
             Page::Host => "host".to_string(),
             Page::Settings => "Settings".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Error {
-    pub title: String,
-    pub message: String,
-    pub action: ErrorAction,
-}
-
-#[derive(Debug, Clone)]
-pub enum ErrorAction {
-    Log,
-    Display,
-    Crash,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.title, self.message)
-    }
-}
-
-impl error::Error for Error {}
-
-impl From<Box<dyn error::Error>> for Error {
-    fn from(err: Box<dyn error::Error>) -> Self {
-        match err.downcast::<tungstenite::Error>() {
-            Ok(normal) if matches!(*normal, tungstenite::Error::ConnectionClosed) => Error::log("Client", "Disconnected normally"),
-            Ok(tng_err) => Error::err("Error", format!("{tng_err}")),
-            Err(other_err) => Error::err("Error", format!("{other_err}")),
-        }
-    }
-}
-
-impl Error {
-    pub fn err(title: impl Into<String>, message: impl Into<String>) -> Error {
-        Error {
-            title: title.into().clone(),
-            message: message.into().clone(),
-            action: ErrorAction::Display,
-        }
-    }
-
-    pub fn log(title: impl Into<String>, message: impl Into<String>) -> Error {
-        Error {
-            title: title.into().clone(),
-            message: message.into().clone(),
-            action: ErrorAction::Log,
         }
     }
 }
@@ -190,8 +83,8 @@ impl MainWindow {
         ]
     }
 
-    fn get_error_dialog(&self, context: &mut ViewContext<Self>) -> ContentDialog {
-        let error = self.display_error.clone();
+    fn get_error_dialog(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>) -> ContentDialog {
+        let error = input.display_error.clone();
 
         ContentDialog::new()
             .is_open(error.is_some())
@@ -202,14 +95,14 @@ impl MainWindow {
             .content(error.and_then(|err| Some(err.message.clone())).unwrap_or("Message not found".into()))
     }
 
-    fn get_navigation_view(&self, context: &mut ViewContext<Self>, view: View) -> View {
+    fn get_navigation_view(&self, input: &<Self as Component>::Input, context: &mut ViewContext<Self>, view: View) -> View {
         let panel = Grid::new()
             .vertical_alignment(VerticalAlignment::Stretch)
             .rows([GridLength::Pixel(0.0), GridLength::STAR])
             .children([
                 Border::new().grid_row(1).content(view).into(),
             ] as [View; _])
-            .content_dialog(self.get_error_dialog(context).into())
+            .content_dialog(self.get_error_dialog(input, context).into())
             ;
 
         NavigationView::new()
@@ -232,22 +125,10 @@ impl MainWindow {
             .on_pane_toggle_requested(context.message(Message::PaneOpenChanged))
             .subtitle("Simple poker server/client")
             .right_header(View::from(self.header_message.clone()))
-            .content(View::from(self.server_url.clone()))
+            .content(View::from(""))
             .into()
     }
 }
-
-async fn recv_message(rx: Arc<Mutex<mpsc::UnboundedReceiver<Message>>>) -> Message {
-    if let Some(msg) = { rx.lock().await.recv().await } {
-        Message::ExternalMessage(rx, msg.into())
-    }
-    else {
-        Message::ExternalMessageFailed(rx)
-    }
-}
-
-pub static STYLES: LazyLock<Context<HashMap<String, styles::ResourceValue>>> =
-    LazyLock::new(|| Context::new(HashMap::new()));
 
 impl HasCancelMessage for MainWindow {
     fn cancel_message() -> <Self as Component>::Message {
@@ -256,36 +137,23 @@ impl HasCancelMessage for MainWindow {
 }
 
 impl Component for MainWindow {
-    type Input = ();
+    type Input = Input;
     type Message = Message;
 
-    fn create(_input: &Self::Input, context: &ComponentContext<Self>) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel::<Message>();
-
-        context.spawn_future(recv_message(Arc::new(Mutex::new(rx))));
-
+    fn create(_input: &Self::Input, _context: &ComponentContext<Self>) -> Self {
         match client::Client::new() {
-            Ok(client) => context.sender().send(Message::ClientCreated(client)),
-            Err(e) => context.sender().send(e.into()),
+            Ok(client) => app::App::tx(app::Message::ClientCreated(client)),
+            Err(e) => app::App::tx(e.into()),
         };
 
         MainWindow {
-            tx: tx,
             is_pane_open: false,
             selected_page: Page::Play,
-            header_message: "Disconnected".into(),
-            clients: vec![],
-            clients_data: vec![],
-            selected_client: None,
-            server: None,
-            server_url: "127.0.0.1:8080".into(),
-            server_token: None,
-            error_queue: VecDeque::new(),
-            display_error: None,
+            header_message: "Server is off".into(),
         }
     }
 
-    fn update(&mut self, message: Self::Message, context: &ComponentContext<Self>) {
+    fn update(&mut self, message: Self::Message, _context: &ComponentContext<Self>) {
         match message {
             Message::PaneOpenChanged => self.is_pane_open = !self.is_pane_open,
             Message::SelectedTagChanged(Some(tag)) => {
@@ -295,190 +163,42 @@ impl Component for MainWindow {
                 self.selected_page = page;
             },
             Message::SelectedTagChanged(None) => {},
-
-
-
-            Message::ServerConnected(ws) => {
-                self.server = Some(ws.clone());
-                let tx = self.tx.clone();
-
-                self.server_token = Some(context.spawn_future(ws.listen(tx)));
-            },
-            Message::ServerClientDisconnected(_addr) => {},
-            Message::ServerUrlChanged(url) => {
-                self.server_url = url;
-            },
-            Message::ServerDisconnected => {
-                if let Some(token) = self.server_token.take() {
-                    token.cancel();
-                }
-
-                if let Some(server) = self.server.take() {
-                    context.spawn_future(server.shutdown());
-                }
-            },
-
-
-
-            Message::ClientCreated(client) => {
-                self.clients.push((client.clone(), None));
-
-                let _ = context.sender().send(Message::ClientShouldFlush(client.id));
-            },
-            Message::ClientSelected(index) => {
-                self.selected_client = index;
-            },
-            Message::ClientConnectionRequested(id, url, nickname) => {
-                self.clients.iter_mut()
-                    .find_map(|elem| if elem.0.id == id { Some(elem) } else { None })
-                    .and_then(|client_info| {
-                        if let (client, None) = client_info {
-                            let tx1 = self.tx.clone();
-                            let tx2 = self.tx.clone();
-                            let copy = client.clone();
-
-                            let token = context.spawn_future_error(
-                                async move {
-                                    let result = copy.run(tx1, &url, &nickname).await;
-
-                                    if result.is_err() {
-                                        copy.disconnect().await;
-                                        let _ = tx2.send(Message::ClientShouldFlush(id));
-                                    }
-
-                                    Ok(result?)
-                                }
-                            );
-
-                            *client_info = (client.clone(), Some(token));
-
-                            let _ = context.sender().send(Message::ClientShouldFlush(id));
-
-                            Some(())
-                        }
-                        else { None }
-                    });
-
-            },
-            Message::ClientDisconnected(id) => {
-                self.clients.iter_mut()
-                    .find_map(|elem| if elem.0.id == id { Some(elem) } else { None })
-                    .and_then(|client_info| {
-                        if let (client, Some(token)) = client_info {
-                            token.cancel();
-
-                            *client_info = (client.clone(), None);
-
-                            Some(())
-                        }
-                        else { None }
-                    });
-            },
-            Message::ClientRemoved(str_id) => {
-                self.clients.retain(|(client, token)| {
-                    if client.id.to_string( ) == str_id {
-                        token.as_ref().map(|token| token.cancel());
-
-                        false
-                    }
-                    else { true }
-                });
-                self.clients_data.retain(|client| client.id.to_string() != str_id);
-            },
-            Message::ClientShouldFlush(id) => {
-                self.clients.iter()
-                    .find_map(|(client, _)| if client.id == id { Some(client) } else { None })
-                    .and_then(|client| {
-                        let client = client.clone();
-
-                        context.spawn_future(
-                            async move {
-                                Message::ClientHasFlushed(client.get_data().await)
-                            }
-                        );
-
-                        Some(())
-                    });
-            },
-            Message::ClientHasFlushed(updated) => {
-                self.selected_client = self.clients_data.iter_mut()
-                    .find_map(|client| if client.id == updated.id { Some(client) } else { None })
-                    .and_then(|client| { *client = updated.clone(); self.selected_client })
-                    .or_else(|| {
-                        self.clients_data.push(updated);
-                        Some(self.clients_data.len() - 1)
-                    });
-            },
-
-
-            Message::ExternalMessage(rx, msg) => {
-                let _ = context.sender().send(*msg);
-
-                context.spawn_future(recv_message(rx));
-            },
-            Message::ExternalMessageFailed(rx) => {
-                context.spawn_future(recv_message(rx));
-            },
-
-
-            Message::Error(err) => {
-                match err.action {
-                    ErrorAction::Log => {
-                        eprintln!("[LOG] {err:?}");
-                    },
-                    ErrorAction::Display => {
-                        if self.display_error.is_none() {
-                            self.display_error = Some(err);
-                        }
-                        else {
-                            self.error_queue.push_back(err);
-                        }
-                    },
-                    ErrorAction::Crash => {
-                        panic!("{err:?}");
-                    },
-                }
-            },
             Message::ErrorDismissed => {
-                self.display_error = self.error_queue.pop_front();
+                app::App::tx(app::Message::ErrorDismissed);
             },
             Message::NoOp => {},
         }
-
-        if self.server_token.is_some() {
-            self.header_message = "Connected".into();
-        }
-        else {
-            self.header_message = "Disconnected".into();
-        }
     }
 
-    fn view(&self, _input: &Self::Input, context: &mut ViewContext<Self>) -> View {
+    fn input_changed(&mut self, input: &Self::Input, _context: &ComponentContext<Self>) {
+        self.header_message = {
+            if input.server_is_running { "Server is ON".into() }
+            else { "Server is off".into() }
+        };
+    }
+
+    fn view(&self, input: &Self::Input, context: &mut ViewContext<Self>) -> View {
         let titlebar = self.get_titlebar(context);
 
         let frame = match self.selected_page {
             Page::Play => {
                 View::component::<PlayPage>(play_page::Input {
-                    window_tx: self.tx.clone(),
-                    clients: self.clients_data.clone(),
-                    selected_client: self.selected_client,
+                    clients: input.clients_data.clone(),
+                    selected_client: input.selected_client,
                 })
             },
             Page::Host => {
                 View::component::<HostPage>(host_page::Input {
-                    window_tx: self.tx.clone(),
-                    server_is_running: self.server.is_some(),
-                    server_url: self.server_url.clone(),
+                    server_is_running: input.server_is_running,
                 })
             },
             Page::Settings => {
                 View::component::<SettingsPage>(settings_page::Input {
-                    window_tx: self.tx.clone(),
                 })
             },
         };
 
-        let navigation_view = self.get_navigation_view(context, frame);
+        let navigation_view = self.get_navigation_view(input, context, frame);
 
         context.with_titlebar(WindowBackdrop::Mica, titlebar, navigation_view)
     }
